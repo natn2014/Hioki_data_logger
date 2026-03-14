@@ -144,8 +144,12 @@ class MainWindow(QDialog):
 
         # Push loaded values into UI
         self.ui.pushButton_model.setText(self.cleaned_model if self.cleaned_model else "Model")
+        self.ui.doubleSpinBox_lowerLimit.blockSignals(True)
+        self.ui.doubleSpinBox_UpperLimit.blockSignals(True)
         self.ui.doubleSpinBox_lowerLimit.setValue(self.lower_limit)
         self.ui.doubleSpinBox_UpperLimit.setValue(self.upper_limit)
+        self.ui.doubleSpinBox_lowerLimit.blockSignals(False)
+        self.ui.doubleSpinBox_UpperLimit.blockSignals(False)
 
     def save_config(self):
         """Save current_model and per-model limits to config.json"""
@@ -249,8 +253,12 @@ class MainWindow(QDialog):
                     if self.cleaned_model and self.cleaned_model in models:
                         self.lower_limit = models[self.cleaned_model].get("lower_limit", 0.0)
                         self.upper_limit = models[self.cleaned_model].get("upper_limit", 1000.0)
+                        self.ui.doubleSpinBox_lowerLimit.blockSignals(True)
+                        self.ui.doubleSpinBox_UpperLimit.blockSignals(True)
                         self.ui.doubleSpinBox_lowerLimit.setValue(self.lower_limit)
                         self.ui.doubleSpinBox_UpperLimit.setValue(self.upper_limit)
+                        self.ui.doubleSpinBox_lowerLimit.blockSignals(False)
+                        self.ui.doubleSpinBox_UpperLimit.blockSignals(False)
                         print(f"DEBUG: Loaded limits for model '{self.cleaned_model}': {self.lower_limit} - {self.upper_limit}")
         except Exception as e:
             print(f"Error loading model limits: {e}")
