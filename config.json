@@ -1,0 +1,11 @@
+{
+  "lower_limit": 0.1,
+  "upper_limit": 10,
+  "current_model": "1SRG14R(BRK)-MM-4FIMXA-A7",
+  "models": {
+    "1SRG14R(BRK)-MM-4FIMXA-A7": {
+      "lower_limit": 0.01,
+      "upper_limit": 14.0
+    }
+  }
+}
