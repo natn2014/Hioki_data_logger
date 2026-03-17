@@ -9,6 +9,7 @@ class Usb_rs:
         self.ser = serial
         self.gui = gui
         self.read_chunk_timeout = 0.05
+        self.last_error = ""
 
     def _report_error(self, title, error):
         # Keep serial helper UI-framework agnostic for desktop and headless deployments.
@@ -21,8 +22,10 @@ class Usb_rs:
         try:
             # Use a short blocking timeout to avoid CPU-heavy busy loops.
             self.ser = serial.Serial(port, speed, timeout=self.read_chunk_timeout)
+            self.last_error = ""
             ret = True
         except Exception as e:
+            self.last_error = str(e)
             self._report_error("Open Error", e)
         
         return ret
@@ -45,8 +48,10 @@ class Usb_rs:
         try:
             strMsg = strMsg + '\r\n'                #Add a terminator, CR+LF, to transmitted command
             self.ser.write(bytes(strMsg, 'utf-8'))  #Convert to byte type and send
+            self.last_error = ""
             ret = True
         except Exception as e:
+            self.last_error = str(e)
             self._report_error("Send Error", e)
 
         return ret
@@ -74,8 +79,9 @@ class Usb_rs:
                     msgBuf = "Timeout Error"
                     break
         except Exception as e:
+            self.last_error = str(e)
             self._report_error("Receive Error", e)
-            msgBuf = "Error"
+            msgBuf = f"Error: {e}"
 
         return msgBuf
     
@@ -85,7 +91,8 @@ class Usb_rs:
         if ret:
             msgBuf_str = Usb_rs.receiveMsg(self, timeout)   #Receive response when command transmission is succeeded
         else:
-            msgBuf_str = "Error"
+            detail = self.last_error if self.last_error else "Send failed"
+            msgBuf_str = f"Error: {detail}"
 
         return msgBuf_str
 
