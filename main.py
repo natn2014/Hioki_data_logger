@@ -66,6 +66,7 @@ class MainWindow(QDialog):
         self.serial_obj = Usb_rs(gui=True)
         self.connected = False
         self.current_port = None
+        self.detect_in_progress = False
         self.previous_numeric = None
         self.previous_raw = None
         self.consecutive_same = 0
@@ -75,6 +76,9 @@ class MainWindow(QDialog):
         self.last_db_insert_time = None  # Track last DB insertion time
         self.timer = QTimer()
         self.timer.timeout.connect(self.poll_fetch)
+        self.detect_retry_timer = QTimer(self)
+        self.detect_retry_timer.setSingleShot(True)
+        self.detect_retry_timer.timeout.connect(self.start_auto_detect)
         self.init_ui()
         self.load_config()
         self.start_auto_detect()
@@ -112,6 +116,9 @@ class MainWindow(QDialog):
         self.ui.pushButton_Judgement.setEnabled(False)
 
     def start_auto_detect(self):
+        if self.connected or self.detect_in_progress:
+            return
+        self.detect_in_progress = True
         self.set_status("Scanning ports...", "orange")
         self.det_thread = AutoDetectThread()
         self.det_thread.found.connect(self.on_port_found)
@@ -277,14 +284,18 @@ class MainWindow(QDialog):
             return None, "N/A"
 
     def on_port_found(self, port, idn):
+        self.detect_in_progress = False
+        self.detect_retry_timer.stop()
         self.current_port = port
         self.set_status(f"Found HIOKI on {port} ({idn})", "green")
         # Auto start measurement once device detected
         self.start_mode()
 
     def on_port_not_found(self):
+        self.detect_in_progress = False
         self.set_status("No HIOKI device found", "red")
-        QMessageBox.warning(self, "Auto Detect", "No HIOKI device found on available ports.")
+        # Retry detection every 1 second until a device is found.
+        self.detect_retry_timer.start(1000)
 
     def start_mode(self):
         if not self.current_port:
@@ -328,9 +339,15 @@ class MainWindow(QDialog):
         now = datetime.now()
         time_str = now.strftime("%H:%M:%S.%f")[:-3]
 
-        if msg in ("Timeout Error", "Error"):
+        if msg == "Timeout Error":
             self.consecutive_same = 0
             self.append_log(f"[{time_str}] Error: {msg}")
+            return
+
+        if isinstance(msg, str) and msg.startswith("Error"):
+            self.consecutive_same = 0
+            self.append_log(f"[{time_str}] Error: {msg}")
+            self.handle_comm_error(msg)
             return
 
         record = False
@@ -436,6 +453,30 @@ class MainWindow(QDialog):
                 self.ui.pushButton_Judgement.setStyleSheet("background-color: #9e9e9e; color: white; font-weight: bold;")
         # Removed logging of unstable readings - only log stable data
 
+    def handle_comm_error(self, msg):
+        """Recover from serial I/O failures by resetting connection and retrying detection."""
+        error_lower = msg.lower() if isinstance(msg, str) else ""
+        reconnect_keywords = (
+            "input/output error",
+            "i/o error",
+            "write failed",
+            "read failed",
+            "device",
+            "disconnected",
+            "invalid handle",
+            "port",
+        )
+
+        if any(k in error_lower for k in reconnect_keywords):
+            self.timer.stop()
+            self._close_serial_connection()
+            self.connected = False
+            self.current_port = None
+            self.previous_numeric = None
+            self.previous_raw = None
+            self.set_status("Connection lost, retrying...", "orange")
+            self.detect_retry_timer.start(1000)
+
     def _close_serial_connection(self):
         if self.connected:
             try:
@@ -451,6 +492,7 @@ class MainWindow(QDialog):
 
     def closeEvent(self, event):
         self.timer.stop()
+        self.detect_retry_timer.stop()
         self._close_serial_connection()
         self.connected = False
         event.accept()
