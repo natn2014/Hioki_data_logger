@@ -1,0 +1,9 @@
+{
+  "current_model": "TESE",
+  "models": {
+    "TESE": {
+      "lower_limit": 1.7,
+      "upper_limit": 1.9
+    }
+  }
+}

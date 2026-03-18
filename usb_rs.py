@@ -2,46 +2,74 @@
 
 import serial
 import time
+import os
 
 class Usb_rs:
 
     def __init__(self, gui=False):
         self.ser = serial
         self.gui = gui
-        self.read_chunk_timeout = 0.05
+        self.read_chunk_timeout = 0.1
         self.last_error = ""
+        self.port_name = None
 
     def _report_error(self, title, error):
         # Keep serial helper UI-framework agnostic for desktop and headless deployments.
-        print(f"{title}: {error}")
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[{timestamp}] {title}: {error}")
     
-    #Open port
+    # Check if port is still open and valid
+    def is_port_open(self):
+        """Verify that serial port is still connected and responsive."""
+        try:
+            if self.ser is None or not isinstance(self.ser, serial.Serial):
+                return False
+            # On Linux, verify device file still exists
+            if hasattr(self, 'port_name') and self.port_name:
+                if not os.path.exists(self.port_name):
+                    self._report_error("Port State Check", f"Device {self.port_name} no longer exists")
+                    return False
+            # Check if port is actually open
+            if not self.ser.is_open:
+                self._report_error("Port State Check", "Port is closed")
+                return False
+            return True
+        except Exception as e:
+            self._report_error("Port State Check", f"Error checking port: {e}")
+            return False
+    
+    # Open port
     def open(self, port, speed):
         ret = False
 
         try:
-            # Use a short blocking timeout to avoid CPU-heavy busy loops.
+            # Use longer timeout for batch reading
             self.ser = serial.Serial(port, speed, timeout=self.read_chunk_timeout)
+            self.port_name = port
             self.last_error = ""
+            self._report_error("Port Open", f"Successfully opened {port} at {speed} baud")
             ret = True
         except Exception as e:
             self.last_error = str(e)
-            self._report_error("Open Error", e)
+            self._report_error("Port Open Error", f"{e}")
         
         return ret
 
-    #Close port
+    # Close port
     def close(self):
         ret = False
 
         try:   
-            self.ser.close()
+            if self.ser and isinstance(self.ser, serial.Serial):
+                self.ser.close()
+                self._report_error("Port Close", f"Successfully closed {self.port_name}")
             ret = True
         except Exception as e:
-            self._report_error("Close Error", e)
+            self._report_error("Port Close Error", f"{e}")
         
         return ret
-    #Send command
+
+    # Send command
     def sendMsg(self, strMsg):
         ret = False
 
@@ -52,40 +80,49 @@ class Usb_rs:
             ret = True
         except Exception as e:
             self.last_error = str(e)
-            self._report_error("Send Error", e)
+            self._report_error("Send Error", f"{e}")
 
         return ret
     
-    #Receive
+    # Receive - Optimized with batch reading instead of byte-by-byte
     def receiveMsg(self, timeout):
-
-        msgBuf = bytes(range(0))                    #Received Data
-
+        """Receive message optimized for batch reads. Reads up to 64 bytes per iteration."""
+        msgBuf = b""
         try:
-            start = time.time()                     #Record time for timeout
+            start = time.time()
             while True:
-                rcv = self.ser.read(1)              #Blocking read with short timeout
+                # Try to read up to 64 bytes at once (batch reading)
+                rcv = self.ser.read(64)
                 if rcv:
-                    if rcv == b"\n":                #End the loop when LF is received
-                        msgBuf = msgBuf.decode('utf-8')
-                        break
-                    elif rcv == b"\r":              #Ignore the terminator CR
-                        pass
-                    else:
-                        msgBuf = msgBuf + rcv
+                    msgBuf += rcv
+                    # Check if message is complete (ends with LF)
+                    if b"\n" in msgBuf:
+                        # Split on newline, process first message
+                        lines = msgBuf.split(b"\n", 1)
+                        # Remove carriage returns and decode
+                        msg_str = lines[0].replace(b"\r", b"").decode('utf-8', errors='ignore')
+                        self.last_error = ""
+                        return msg_str
+                else:
+                    # No data available in this read cycle
+                    pass
                 
-                #Timeout processing
-                if  time.time() - start > timeout:
-                    msgBuf = "Timeout Error"
-                    break
+                # Timeout processing
+                if time.time() - start > timeout:
+                    if msgBuf:
+                        # Partial data received - return what we have
+                        msg_str = msgBuf.replace(b"\r", b"").decode('utf-8', errors='ignore').strip()
+                        if msg_str:
+                            self._report_error("Receive Partial", f"Got partial response after {timeout}s: {msg_str[:50]}")
+                            return msg_str
+                    self._report_error("Receive Timeout", f"No complete response after {timeout}s (received {len(msgBuf)} bytes)")
+                    return "Timeout Error"
         except Exception as e:
             self.last_error = str(e)
-            self._report_error("Receive Error", e)
-            msgBuf = f"Error: {e}"
-
-        return msgBuf
+            self._report_error("Receive Error", f"{e}")
+            return f"Error: {e}"
     
-    #Transmit and receive commands
+    # Transmit and receive commands
     def SendQueryMsg(self, strMsg, timeout):
         ret = Usb_rs.sendMsg(self, strMsg)
         if ret:

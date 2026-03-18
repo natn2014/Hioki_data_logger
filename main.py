@@ -74,13 +74,27 @@ class MainWindow(QDialog):
         self.upper_limit = 1000.0
         self.cleaned_model = ""
         self.last_db_insert_time = None  # Track last DB insertion time
+        
+        # Connection health and recovery settings
+        self.reconnect_delay = 1.0  # Start with 1 second, exponential backoff
+        self.max_reconnect_delay = 60.0  # Cap at 60 seconds
+        self.consecutive_timeouts = 0
+        self.max_consecutive_timeouts = 3  # Trigger reconnect after 3 timeouts
+        self.last_health_check = None
+        self.health_check_interval = 30  # Check connection every 30 seconds
+        
+        # Timers
         self.timer = QTimer()
         self.timer.timeout.connect(self.poll_fetch)
         self.detect_retry_timer = QTimer(self)
         self.detect_retry_timer.setSingleShot(True)
         self.detect_retry_timer.timeout.connect(self.start_auto_detect)
+        self.health_check_timer = QTimer(self)  # Periodic connection health check
+        self.health_check_timer.timeout.connect(self.check_connection_health)
+        
         self.init_ui()
         self.load_config()
+        self.log_event("Application started")
         self.start_auto_detect()
 
     def init_ui(self):
@@ -119,7 +133,9 @@ class MainWindow(QDialog):
         if self.connected or self.detect_in_progress:
             return
         self.detect_in_progress = True
-        self.set_status("Scanning ports...", "orange")
+        self.reconnect_delay = min(self.reconnect_delay * 1.5, self.max_reconnect_delay)  # Exponential backoff
+        self.log_event(f"Auto-detect starting (reconnect delay: {self.reconnect_delay:.1f}s)")
+        self.set_status(f"Scanning ports (retry in {self.reconnect_delay:.0f}s)...", "orange")
         self.det_thread = AutoDetectThread()
         self.det_thread.found.connect(self.on_port_found)
         self.det_thread.not_found.connect(self.on_port_not_found)
@@ -287,15 +303,19 @@ class MainWindow(QDialog):
         self.detect_in_progress = False
         self.detect_retry_timer.stop()
         self.current_port = port
+        self.reconnect_delay = 1.0  # Reset backoff on successful detection
+        self.log_event(f"HIOKI device found: {port} - {idn}")
         self.set_status(f"Found HIOKI on {port} ({idn})", "green")
         # Auto start measurement once device detected
         self.start_mode()
 
     def on_port_not_found(self):
         self.detect_in_progress = False
+        self.log_event("No HIOKI device found, scheduling retry...")
         self.set_status("No HIOKI device found", "red")
-        # Retry detection every 1 second until a device is found.
-        self.detect_retry_timer.start(1000)
+        # Retry detection with exponential backoff
+        retry_ms = int(self.reconnect_delay * 1000)
+        self.detect_retry_timer.start(retry_ms)
 
     def start_mode(self):
         if not self.current_port:
@@ -304,10 +324,14 @@ class MainWindow(QDialog):
         if self.connected:
             return
         try:
+            self.log_event(f"Attempting to open port: {self.current_port}")
             if not self.serial_obj.open(self.current_port, BAUD_RATE):
-                raise RuntimeError("Failed to open port")
+                raise RuntimeError(f"Failed to open port: {self.serial_obj.last_error}")
             self.connected = True
+            self.log_event(f"Port opened successfully: {self.current_port}")
+            
             # Configure meter
+            self.log_event("Configuring meter...")
             self.serial_obj.sendMsg(":INITIATE:CONTINUOUS ON")
             time.sleep(0.1)
             self.serial_obj.sendMsg(":TRIGGER:SOURCE IMM")
@@ -318,11 +342,17 @@ class MainWindow(QDialog):
             self.previous_numeric = None
             self.previous_raw = None
             self.consecutive_same = 0
+            self.consecutive_timeouts = 0
             self.log_model.setStringList([])
+            self.last_health_check = time.time()
+            
             self.append_log("Auto Hold enabled. Polling FETC?...")
+            self.log_event("Device configured and polling started")
             self.set_status(f"Connected on {self.current_port} (polling)", "green")
             self.timer.start(POLL_INTERVAL_MS)
+            self.health_check_timer.start(5000)  # Health check every 5 seconds
         except Exception as e:
+            self.log_event(f"Connection failed: {e}")
             QMessageBox.critical(self, "Connection Error", str(e))
             self.set_status("Connection failed", "red")
             self.connected = False
@@ -331,9 +361,11 @@ class MainWindow(QDialog):
         if not self.connected:
             return
         try:
-            msg = self.serial_obj.SendQueryMsg("FETC?", 1)
+            msg = self.serial_obj.SendQueryMsg("FETC?", 2)
         except Exception as e:
+            self.log_event(f"FETC? query exception: {e}")
             self.append_log(f"Error: {e}")
+            self.handle_comm_error(str(e))
             return
 
         now = datetime.now()
@@ -341,14 +373,24 @@ class MainWindow(QDialog):
 
         if msg == "Timeout Error":
             self.consecutive_same = 0
+            self.consecutive_timeouts += 1
+            self.log_event(f"FETC? timeout #{self.consecutive_timeouts}")
             self.append_log(f"[{time_str}] Error: {msg}")
+            if self.consecutive_timeouts >= self.max_consecutive_timeouts:
+                self.log_event(f"Max consecutive timeouts reached ({self.consecutive_timeouts}), triggering reconnect")
+                self.handle_comm_error("Multiple timeouts detected")
             return
 
         if isinstance(msg, str) and msg.startswith("Error"):
             self.consecutive_same = 0
+            self.consecutive_timeouts += 1
+            self.log_event(f"FETC? error: {msg}")
             self.append_log(f"[{time_str}] Error: {msg}")
             self.handle_comm_error(msg)
             return
+        
+        # Successful read - reset timeout counter
+        self.consecutive_timeouts = 0
 
         record = False
         stable_eps = 1e-9
@@ -453,6 +495,32 @@ class MainWindow(QDialog):
                 self.ui.pushButton_Judgement.setStyleSheet("background-color: #9e9e9e; color: white; font-weight: bold;")
         # Removed logging of unstable readings - only log stable data
 
+    def check_connection_health(self):
+        """Periodically verify device is still connected by checking port state and sending heartbeat."""
+        if not self.connected:
+            return
+        try:
+            # Check if port is still open
+            if not self.serial_obj.is_port_open():
+                self.log_event("Health check: Port is no longer open")
+                self.handle_comm_error("Port no longer open")
+                return
+            
+            # Optional: Send periodic *IDN? to verify device is responsive (every 30 seconds)
+            current_time = time.time()
+            if self.last_health_check is None or (current_time - self.last_health_check) >= self.health_check_interval:
+                self.log_event("Health check: Sending *IDN? to verify device")
+                response = self.serial_obj.SendQueryMsg("*IDN?", 1)
+                self.last_health_check = current_time
+                if response.startswith("Error") or response == "Timeout Error":
+                    self.log_event(f"Health check failed: {response}")
+                    self.handle_comm_error(f"Device health check failed: {response}")
+                else:
+                    self.log_event(f"Health check passed: {response}")
+        except Exception as e:
+            self.log_event(f"Health check exception: {e}")
+            self.handle_comm_error(str(e))
+
     def handle_comm_error(self, msg):
         """Recover from serial I/O failures by resetting connection and retrying detection."""
         error_lower = msg.lower() if isinstance(msg, str) else ""
@@ -465,33 +533,54 @@ class MainWindow(QDialog):
             "disconnected",
             "invalid handle",
             "port",
+            "no such device",
+            "bad file descriptor",
+            "broken pipe",
+            "permission denied",
+            "resource busy",
+            "multiple timeouts",
+            "health check failed",
         )
 
-        if any(k in error_lower for k in reconnect_keywords):
+        trigger_reconnect = any(k in error_lower for k in reconnect_keywords)
+        if trigger_reconnect:
+            self.log_event(f"Communication error detected: {msg} - Initiating reconnection")
             self.timer.stop()
+            self.health_check_timer.stop()
             self._close_serial_connection()
             self.connected = False
             self.current_port = None
             self.previous_numeric = None
             self.previous_raw = None
+            self.consecutive_timeouts = 0
             self.set_status("Connection lost, retrying...", "orange")
-            self.detect_retry_timer.start(1000)
+            # Use exponential backoff for retry
+            retry_ms = int(self.reconnect_delay * 1000)
+            self.log_event(f"Scheduling reconnection attempt in {self.reconnect_delay:.1f}s")
+            self.detect_retry_timer.start(retry_ms)
+        else:
+            self.log_event(f"Non-critical error (no reconnect): {msg}")
 
     def _close_serial_connection(self):
         if self.connected:
             try:
+                self.log_event("Closing serial connection")
                 self.serial_obj.close()
-            except Exception:
-                pass
+            except Exception as e:
+                self.log_event(f"Error during connection close: {e}")
 
     def stop_mode(self):
+        self.log_event("Measurement stopped by user")
         self.timer.stop()
+        self.health_check_timer.stop()
         self._close_serial_connection()
         self.connected = False
         self.set_status("Stopped", "red")
 
     def closeEvent(self, event):
+        self.log_event("Application closing")
         self.timer.stop()
+        self.health_check_timer.stop()
         self.detect_retry_timer.stop()
         self._close_serial_connection()
         self.connected = False
@@ -510,6 +599,12 @@ class MainWindow(QDialog):
         label.setPalette(palette)
         label.setStyleSheet("font-weight: bold;")
 
+    def log_event(self, event_text):
+        """Log detailed event to console with timestamp for debugging."""
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        full_msg = f"[{timestamp}] {event_text}"
+        print(full_msg)
+    
     def append_log(self, text):
         """Append a line to the list view logger."""
         items = self.log_model.stringList()
