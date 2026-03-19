@@ -3,7 +3,7 @@
 import pyodbc
 from datetime import datetime
 
-def insert_to_mssql(model, value, status):
+def insert_to_mssql(model, value, status, timeout=5):
     # 1. Connection Parameters
     server = '172.18.72.16'
     database = 'ENGINEER_DB'
@@ -12,12 +12,13 @@ def insert_to_mssql(model, value, status):
     # Ensure the driver name matches what is installed on your system
     driver = '{ODBC Driver 18 for SQL Server}' 
 
-    conn_str = f'DRIVER={driver};SERVER={server};DATABASE={database};UID={username};PWD={password}'
+    # Add timeout to prevent hanging on unreachable server
+    conn_str = f'DRIVER={driver};SERVER={server};DATABASE={database};UID={username};PWD={password};timeout={timeout};TrustServerCertificate=yes'
 
     conn = None
     try:
-        # 2. Establish Connection
-        conn = pyodbc.connect(conn_str)
+        # 2. Establish Connection with timeout
+        conn = pyodbc.connect(conn_str, timeout=timeout)
         cursor = conn.cursor()
 
         # 3. Prepare Data
@@ -47,4 +48,4 @@ def insert_to_mssql(model, value, status):
 
 if __name__ == "__main__":
     # Manual test entry; will not run when imported
-    insert_to_mssql("1SRG14R(BRK)-MM-4FIMXA-A7", 102.0004, "OK")
+    insert_to_mssql("TEST_upload", 111.00, "OK")

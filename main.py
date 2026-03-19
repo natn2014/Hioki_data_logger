@@ -23,7 +23,7 @@ from PySide2.QtCore import QStringListModel
 from usb_rs import Usb_rs
 from insert_resistance2db import insert_to_mssql
 from ui_UI_Resistance import Ui_Dialog
-from db_upload_manager import DBUploadManager
+from db_upload_manager import DBUploadManager, UploadSignals
 
 BAUD_RATE = 9600
 POLL_INTERVAL_MS = 500  # default polling interval for FETC?
@@ -65,7 +65,13 @@ class MainWindow(QDialog):
     def __init__(self):
         super().__init__()
         self.serial_obj = Usb_rs(gui=True)
-        self.db_manager = DBUploadManager()  # Initialize upload manager
+        
+        # Create signals for thread-safe callbacks
+        self.upload_signals = UploadSignals()
+        self.upload_signals.upload_complete.connect(self.on_upload_complete)
+        self.upload_signals.retry_complete.connect(self.on_retry_complete)
+        
+        self.db_manager = DBUploadManager(parent_signals=self.upload_signals)  # Initialize upload manager
         self.connected = False
         self.current_port = None
         self.detect_in_progress = False
