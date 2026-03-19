@@ -484,15 +484,7 @@ class MainWindow(QDialog):
             self.append_log(log_line)
             
             # Update judgement indicator
-            if pass_result is True:
-                self.ui.pushButton_Judgement.setText("PASS")
-                self.ui.pushButton_Judgement.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
-            elif pass_result is False:
-                self.ui.pushButton_Judgement.setText("FAIL")
-                self.ui.pushButton_Judgement.setStyleSheet("background-color: #f44336; color: white; font-weight: bold;")
-            else:
-                self.ui.pushButton_Judgement.setText("N/A")
-                self.ui.pushButton_Judgement.setStyleSheet("background-color: #9e9e9e; color: white; font-weight: bold;")
+            self.set_judgement_status(pass_result)
         # Removed logging of unstable readings - only log stable data
 
     def check_connection_health(self):
@@ -598,6 +590,17 @@ class MainWindow(QDialog):
         palette.setColor(QPalette.WindowText, QColor(color_map.get(color, 'black')))
         label.setPalette(palette)
         label.setStyleSheet("font-weight: bold;")
+
+    def set_judgement_status(self, pass_result):
+        """Update judgement indicator button based on pass/fail result."""
+        judgement_map = {
+            True: ("PASS", "#4CAF50"),      # Green
+            False: ("FAIL", "#f44336"),     # Red
+            None: ("N/A", "#9e9e9e")        # Gray
+        }
+        text, color = judgement_map.get(pass_result, ("N/A", "#9e9e9e"))
+        self.ui.pushButton_Judgement.setText(text)
+        self.ui.pushButton_Judgement.setStyleSheet(f"background-color: {color}; color: white; font-weight: bold;")
 
     def log_event(self, event_text):
         """Log detailed event to console with timestamp for debugging."""
