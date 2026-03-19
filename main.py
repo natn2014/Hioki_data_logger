@@ -23,12 +23,13 @@ from PySide2.QtCore import QStringListModel
 from usb_rs import Usb_rs
 from insert_resistance2db import insert_to_mssql
 from ui_UI_Resistance import Ui_Dialog
+from db_upload_manager import DBUploadManager
 
 BAUD_RATE = 9600
 POLL_INTERVAL_MS = 500  # default polling interval for FETC?
 CONFIG_FILE = "gui_mode5_config.json"
 MAX_VALID_OHMS = 1e12  # ignore readings above this magnitude
-CSV_HEADERS = ["Timestamp", "Resistance", "Status", "Model", "Date", "Time"]
+CSV_HEADERS = ["Timestamp", "Resistance", "Status", "Model", "Date", "Time", "DB_Status"]
 
 
 class AutoDetectThread(QThread):
@@ -64,6 +65,7 @@ class MainWindow(QDialog):
     def __init__(self):
         super().__init__()
         self.serial_obj = Usb_rs(gui=True)
+        self.db_manager = DBUploadManager()  # Initialize upload manager
         self.connected = False
         self.current_port = None
         self.detect_in_progress = False
@@ -91,6 +93,9 @@ class MainWindow(QDialog):
         self.detect_retry_timer.timeout.connect(self.start_auto_detect)
         self.health_check_timer = QTimer(self)  # Periodic connection health check
         self.health_check_timer.timeout.connect(self.check_connection_health)
+        self.retry_upload_timer = QTimer(self)  # Retry pending uploads periodically
+        self.retry_upload_timer.setSingleShot(False)
+        self.retry_upload_timer.timeout.connect(self.retry_pending_uploads)
         
         self.init_ui()
         self.load_config()
@@ -128,6 +133,12 @@ class MainWindow(QDialog):
 
         # Judgement button used as status indicator
         self.ui.pushButton_Judgement.setEnabled(False)
+        
+        # Check if there are pending uploads to retry
+        pending_count = self.db_manager.get_pending_count()
+        if pending_count > 0:
+            self.log_event(f"Found {pending_count} pending uploads to retry")
+            self.append_log(f"! {pending_count} value(s) waiting to upload")
 
     def start_auto_detect(self):
         if self.connected or self.detect_in_progress:
@@ -211,7 +222,7 @@ class MainWindow(QDialog):
         app_dir = os.path.dirname(os.path.abspath(__file__))
         return os.path.join(app_dir, f"{date_name}.csv")
 
-    def append_csv_row(self, current_time, resistance_value, status, model):
+    def append_csv_row(self, current_time, resistance_value, status, model, db_status="pending"):
         """Append one measurement row to daily CSV, creating header once."""
         csv_path = self.get_daily_csv_path(current_time)
         file_exists = os.path.exists(csv_path)
@@ -230,7 +241,8 @@ class MainWindow(QDialog):
                 status,
                 model,
                 date_value,
-                time_value
+                time_value,
+                db_status
             ])
 
     def clean_raw_text(self, raw_text):
@@ -351,6 +363,7 @@ class MainWindow(QDialog):
             self.set_status(f"Connected on {self.current_port} (polling)", "green")
             self.timer.start(POLL_INTERVAL_MS)
             self.health_check_timer.start(5000)  # Health check every 5 seconds
+            self.retry_upload_timer.start(10000)  # Retry pending uploads every 10 seconds
         except Exception as e:
             self.log_event(f"Connection failed: {e}")
             QMessageBox.critical(self, "Connection Error", str(e))
@@ -458,7 +471,7 @@ class MainWindow(QDialog):
                 resistance_value = msg
 
             try:
-                self.append_csv_row(current_time, resistance_value, status_for_db, cleaned_model)
+                self.append_csv_row(current_time, resistance_value, status_for_db, cleaned_model, "pending")
                 csv_status = "(CSV: ✓)"
             except Exception as e:
                 csv_status = f"(CSV Error: {e})"
@@ -466,13 +479,14 @@ class MainWindow(QDialog):
 
             if cleaned_model and can_insert:
                 try:
-                    print(f"DEBUG: Inserting to DB - Model: {cleaned_model}, Value: {resistance_value}, Status: {status_for_db}")
-                    insert_to_mssql(cleaned_model, resistance_value, status_for_db)
+                    print(f"DEBUG: Uploading to DB - Model: {cleaned_model}, Value: {resistance_value}, Status: {status_for_db}")
+                    # Use async upload to prevent GUI hang
+                    self.db_manager.upload_async(cleaned_model, resistance_value, status_for_db, self.on_upload_complete)
                     self.last_db_insert_time = current_time
-                    db_status = "(DB: ✓)"
+                    db_status = "(DB: Uploading...)"
                 except Exception as e:
                     db_status = f"(DB Error: {e})"
-                    print(f"Database insertion error: {e}")
+                    print(f"Database upload error: {e}")
             elif not cleaned_model:
                 db_status = "(DB: No Model)"
                 print("DEBUG: No model set - click Model button to enter model name")
@@ -486,6 +500,33 @@ class MainWindow(QDialog):
             # Update judgement indicator
             self.set_judgement_status(pass_result)
         # Removed logging of unstable readings - only log stable data
+
+    def on_upload_complete(self, success, error_msg):
+        """Callback when async upload completes."""
+        if success:
+            self.log_event("Database upload successful")
+        else:
+            self.log_event(f"Database upload failed: {error_msg}")
+            pending_count = self.db_manager.get_pending_count()
+            self.append_log(f"! Upload failed - {pending_count} queued for retry")
+    
+    def retry_pending_uploads(self):
+        """Periodically retry all pending uploads when connected."""
+        if not self.connected:
+            return
+        
+        pending_count = self.db_manager.get_pending_count()
+        if pending_count > 0:
+            self.log_event(f"Retrying {pending_count} pending uploads...")
+            self.db_manager.retry_pending_uploads(self.on_retry_complete)
+    
+    def on_retry_complete(self, success_count, failed_count, remaining_count):
+        """Callback when retry batch completes."""
+        self.log_event(f"Retry result: {success_count} uploaded, {failed_count} failed, {remaining_count} pending")
+        if remaining_count > 0:
+            self.append_log(f"Retry: {success_count}✓ {failed_count}✗ ({remaining_count} pending)")
+        else:
+            self.append_log(f"All uploads successful!")
 
     def check_connection_health(self):
         """Periodically verify device is still connected by checking port state and sending heartbeat."""
@@ -565,6 +606,7 @@ class MainWindow(QDialog):
         self.log_event("Measurement stopped by user")
         self.timer.stop()
         self.health_check_timer.stop()
+        self.retry_upload_timer.stop()
         self._close_serial_connection()
         self.connected = False
         self.set_status("Stopped", "red")
@@ -573,9 +615,13 @@ class MainWindow(QDialog):
         self.log_event("Application closing")
         self.timer.stop()
         self.health_check_timer.stop()
+        self.retry_upload_timer.stop()
         self.detect_retry_timer.stop()
         self._close_serial_connection()
         self.connected = False
+        pending_count = self.db_manager.get_pending_count()
+        if pending_count > 0:
+            self.log_event(f"Application closing with {pending_count} pending uploads (saved for next run)")
         event.accept()
 
     def set_status(self, text, color):

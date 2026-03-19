@@ -10,7 +10,7 @@ def insert_to_mssql(model, value, status):
     username = 'engineering_user'
     password = 'Engineering@user'
     # Ensure the driver name matches what is installed on your system
-    driver = '{ODBC Driver 17 for SQL Server}' 
+    driver = '{ODBC Driver 18 for SQL Server}' 
 
     conn_str = f'DRIVER={driver};SERVER={server};DATABASE={database};UID={username};PWD={password}'
 
