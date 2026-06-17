@@ -497,8 +497,8 @@ class MainWindow(QDialog):
                 db_status = "(DB: No Model)"
                 print("DEBUG: No model set - click Model button to enter model name")
             else:
-                db_status = "(DB: Wait 5s)"
-                print(f"DEBUG: Waiting for 5s interval - last insert was {(current_time - self.last_db_insert_time).total_seconds():.1f}s ago")
+                db_status = "(DB: Wait 10s)"
+                print(f"DEBUG: Waiting for 10s interval - last insert was {(current_time - self.last_db_insert_time).total_seconds():.1f}s ago")
             
             log_line = f"{time_str}  {msg}  {result_text}  {csv_status}  {db_status}"
             self.append_log(log_line)

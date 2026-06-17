@@ -1,9 +1,17 @@
 {
-  "current_model": "TESE",
+  "current_model": "SRG14-WS",
   "models": {
     "TESE": {
       "lower_limit": 1.7,
       "upper_limit": 1.9
+    },
+    "Test_CLI": {
+      "lower_limit": 8.3,
+      "upper_limit": 13.1
+    },
+    "SRG14-WS": {
+      "lower_limit": 8.7,
+      "upper_limit": 13.1
     }
   }
 }
