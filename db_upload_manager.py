@@ -76,7 +76,7 @@ class DBUploadManager:
                 print(f"[DBUploadManager] Upload successful: {model} = {value}")
                 
                 if self.parent_signals:
-                    self.parent_signals.upload_complete.emit(True, None)
+                    self.parent_signals.upload_complete.emit(True, "")
                 elif callback:
                     callback(True, None)
             except Exception as e:

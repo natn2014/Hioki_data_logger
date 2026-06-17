@@ -14,7 +14,7 @@ import csv
 import serial
 import serial.tools.list_ports
 from datetime import datetime
-from PySide2.QtCore import QTimer, QThread, Signal
+from PySide2.QtCore import QTimer, QThread, Signal, Qt
 from PySide2.QtWidgets import (
     QApplication, QDialog, QMessageBox, QInputDialog, QAbstractSpinBox
 )
@@ -117,8 +117,10 @@ class MainWindow(QDialog):
 
         # Create signals for thread-safe callbacks
         self.upload_signals = UploadSignals()
-        self.upload_signals.upload_complete.connect(self.on_upload_complete)
-        self.upload_signals.retry_complete.connect(self.on_retry_complete)
+        # QueuedConnection ensures slots always run on the main thread even when
+        # signals are emitted from a plain threading.Thread (not QThread).
+        self.upload_signals.upload_complete.connect(self.on_upload_complete, Qt.QueuedConnection)
+        self.upload_signals.retry_complete.connect(self.on_retry_complete, Qt.QueuedConnection)
 
         self.db_manager = DBUploadManager(parent_signals=self.upload_signals)
         self.connected = False

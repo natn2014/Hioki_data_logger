@@ -1,50 +1,59 @@
 #pip install pyodbc ก่อน import
 
+import threading
 import pyodbc
 from datetime import datetime
 
 def insert_to_mssql(model, value, status, timeout=5):
-    # 1. Connection Parameters
     server = '172.18.72.16'
     database = 'ENGINEER_DB'
     username = 'engineering_user'
     password = 'Engineering@user'
-    # Ensure the driver name matches what is installed on your system
-    driver = '{ODBC Driver 18 for SQL Server}' 
+    driver = '{ODBC Driver 18 for SQL Server}'
 
-    # Add timeout to prevent hanging on unreachable server
-    conn_str = f'DRIVER={driver};SERVER={server};DATABASE={database};UID={username};PWD={password};timeout={timeout};TrustServerCertificate=yes'
+    # "Connect Timeout" is the correct ODBC key; pyodbc's timeout kwarg is the
+    # login-timeout fallback.  Both are set so either enforcement path fires first.
+    conn_str = (f'DRIVER={driver};SERVER={server};DATABASE={database};'
+                f'UID={username};PWD={password};'
+                f'Connect Timeout={timeout};TrustServerCertificate=yes')
 
-    conn = None
+    result = {'conn': None, 'error': None}
+
+    def _connect():
+        try:
+            result['conn'] = pyodbc.connect(conn_str, timeout=timeout)
+        except Exception as e:
+            result['error'] = e
+
+    # Run the blocking connect in a daemon thread so we can enforce a hard
+    # deadline on Linux/ARM where the OS TCP timeout can exceed the pyodbc one.
+    t = threading.Thread(target=_connect, daemon=True)
+    t.start()
+    t.join(timeout=timeout + 2)     # give pyodbc's own timeout a chance first
+
+    if t.is_alive():
+        raise RuntimeError(f"Database connection timed out after {timeout}s")
+    if result['error']:
+        raise RuntimeError(f"Error connecting to MSSQL: {result['error']}") from result['error']
+
+    conn = result['conn']
     try:
-        # 2. Establish Connection with timeout
-        conn = pyodbc.connect(conn_str, timeout=timeout)
         cursor = conn.cursor()
-
-        # 3. Prepare Data
         current_date = datetime.now().strftime('%Y-%m-%d')
         current_time = datetime.now().strftime('%H:%M:%S')
-
-        # 4. SQL Query (MSSQL uses '?' as placeholders)
-        # Exclude timestamp columns - let SQL Server manage them automatically
         sql_query = """
-            INSERT INTO resistance ([Timestamp],Resistance, Status, Model, [Date], [Time]) 
+            INSERT INTO resistance ([Timestamp],Resistance, Status, Model, [Date], [Time])
             VALUES (getdate(), ?, ?, ?, ?, ?)
         """
         params = (value, status, model, current_date, current_time)
-
-        # 5. Execute
         cursor.execute(sql_query, params)
         conn.commit()
         print("Data inserted successfully into MSSQL.")
         return True
-
     except Exception as e:
-        raise RuntimeError(f"Error connecting to MSSQL: {e}") from e
-    
+        raise RuntimeError(f"Error inserting to MSSQL: {e}") from e
     finally:
-        if conn is not None:
-            conn.close()
+        conn.close()
 
 if __name__ == "__main__":
     # Manual test entry; will not run when imported
