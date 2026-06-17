@@ -1,0 +1,12 @@
+# Copy service files to systemd
+sudo cp hioki-app.service      /etc/systemd/system/
+sudo cp hioki-watchdog.service /etc/systemd/system/
+
+# Register and enable both (auto-start on boot)
+sudo systemctl daemon-reload
+sudo systemctl enable hioki-app.service
+sudo systemctl enable hioki-watchdog.service
+
+# Start them now (without rebooting)
+sudo systemctl start hioki-app.service
+sudo systemctl start hioki-watchdog.service

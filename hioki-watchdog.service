@@ -1,0 +1,15 @@
+[Unit]
+Description=Hioki Data Logger Watchdog
+After=hioki-app.service
+Requires=hioki-app.service
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/Hioki_data_logger
+ExecStart=/bin/bash /home/pi/Hioki_data_logger/watchdog.sh
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=graphical.target
