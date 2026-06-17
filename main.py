@@ -61,17 +61,66 @@ class AutoDetectThread(QThread):
         self.not_found.emit()
 
 
+class PollWorkerThread(QThread):
+    """Runs all serial I/O (FETC? polling + *IDN? health check) off the main thread."""
+    result_ready = Signal(str)   # FETC? response: number string, "Timeout Error", or "Error: ..."
+    health_ok = Signal(str)      # *IDN? response when device is healthy
+    health_fail = Signal(str)    # error message when *IDN? check fails
+
+    def __init__(self, serial_obj, poll_interval_ms=500, health_check_interval=30):
+        super().__init__()
+        self.serial_obj = serial_obj
+        self.poll_interval = poll_interval_ms / 1000.0
+        self.health_check_interval = health_check_interval
+        self._running = False
+
+    def run(self):
+        self._running = True
+        last_health_check = time.time()
+        while self._running:
+            t_start = time.time()
+
+            msg = self.serial_obj.SendQueryMsg("FETC?", 2)
+            if not self._running:
+                break
+            self.result_ready.emit(msg)
+
+            # Periodic *IDN? heartbeat to verify device is still responsive
+            if self._running:
+                now = time.time()
+                if now - last_health_check >= self.health_check_interval:
+                    last_health_check = now
+                    idn = self.serial_obj.SendQueryMsg("*IDN?", 1)
+                    if not self._running:
+                        break
+                    if idn.startswith("Error") or idn == "Timeout Error":
+                        self.health_fail.emit(f"Device health check failed: {idn}")
+                    else:
+                        self.health_ok.emit(idn)
+
+            # Interruptible sleep for the remainder of the poll interval
+            elapsed = time.time() - t_start
+            remaining = self.poll_interval - elapsed
+            if remaining > 0 and self._running:
+                deadline = time.time() + remaining
+                while self._running and time.time() < deadline:
+                    time.sleep(0.05)
+
+    def stop(self):
+        self._running = False
+
+
 class MainWindow(QDialog):
     def __init__(self):
         super().__init__()
         self.serial_obj = Usb_rs(gui=True)
-        
+
         # Create signals for thread-safe callbacks
         self.upload_signals = UploadSignals()
         self.upload_signals.upload_complete.connect(self.on_upload_complete)
         self.upload_signals.retry_complete.connect(self.on_retry_complete)
-        
-        self.db_manager = DBUploadManager(parent_signals=self.upload_signals)  # Initialize upload manager
+
+        self.db_manager = DBUploadManager(parent_signals=self.upload_signals)
         self.connected = False
         self.current_port = None
         self.detect_in_progress = False
@@ -81,28 +130,25 @@ class MainWindow(QDialog):
         self.lower_limit = 0.0
         self.upper_limit = 1000.0
         self.cleaned_model = ""
-        self.last_db_insert_time = None  # Track last DB insertion time
-        
+        self.last_db_insert_time = None
+
         # Connection health and recovery settings
         self.reconnect_delay = 1.0  # Start with 1 second, exponential backoff
         self.max_reconnect_delay = 60.0  # Cap at 60 seconds
         self.consecutive_timeouts = 0
         self.max_consecutive_timeouts = 3  # Trigger reconnect after 3 timeouts
-        self.last_health_check = None
-        self.health_check_interval = 30  # Check connection every 30 seconds
-        
-        # Timers
-        self.timer = QTimer()
-        self.timer.timeout.connect(self.poll_fetch)
+
+        # Background poll thread — owns all serial I/O after connection
+        self.poll_thread = None
+
+        # Non-blocking timers: reconnect scheduling and upload retry only
         self.detect_retry_timer = QTimer(self)
         self.detect_retry_timer.setSingleShot(True)
         self.detect_retry_timer.timeout.connect(self.start_auto_detect)
-        self.health_check_timer = QTimer(self)  # Periodic connection health check
-        self.health_check_timer.timeout.connect(self.check_connection_health)
-        self.retry_upload_timer = QTimer(self)  # Retry pending uploads periodically
+        self.retry_upload_timer = QTimer(self)
         self.retry_upload_timer.setSingleShot(False)
         self.retry_upload_timer.timeout.connect(self.retry_pending_uploads)
-        
+
         self.init_ui()
         self.load_config()
         self.log_event("Application started")
@@ -139,7 +185,7 @@ class MainWindow(QDialog):
 
         # Judgement button used as status indicator
         self.ui.pushButton_Judgement.setEnabled(False)
-        
+
         # Check if there are pending uploads to retry
         pending_count = self.db_manager.get_pending_count()
         if pending_count > 0:
@@ -200,7 +246,7 @@ class MainWindow(QDialog):
                     config = json.load(f)
             else:
                 config = {}
-            
+
             # Update current model and limits
             config["current_model"] = self.cleaned_model
             if "models" not in config:
@@ -210,7 +256,7 @@ class MainWindow(QDialog):
                     "lower_limit": round(self.lower_limit, 3),
                     "upper_limit": round(self.upper_limit, 3)
                 }
-            
+
             with open(CONFIG_FILE, 'w') as f:
                 json.dump(config, f, indent=2)
         except Exception as e:
@@ -252,25 +298,25 @@ class MainWindow(QDialog):
             ])
 
     def clean_raw_text(self, raw_text):
-        """Clean raw text by removing prefix before and including first '$', 
+        """Clean raw text by removing prefix before and including first '$',
         and removing suffix from second '$' onwards.
         Example: FOD11850100163$1SRG14R(BRK)-MM-4FIMXA-A7$15 -> SRG14R(BRK)-MM-4FIMXA-A7
         """
         raw_text = raw_text.strip()
-        
+
         # Find first '$'
         first_dollar = raw_text.find('$')
         if first_dollar == -1:
             return raw_text  # No '$' found, return as is
-        
+
         # Remove everything up to and including first '$'
         text_after_first = raw_text[first_dollar + 1:]
-        
+
         # Find second '$'
         second_dollar = text_after_first.find('$')
         if second_dollar == -1:
             return text_after_first  # No second '$', return everything after first
-        
+
         # Return text between first and second '$'
         return text_after_first[:second_dollar]
 
@@ -347,8 +393,8 @@ class MainWindow(QDialog):
                 raise RuntimeError(f"Failed to open port: {self.serial_obj.last_error}")
             self.connected = True
             self.log_event(f"Port opened successfully: {self.current_port}")
-            
-            # Configure meter
+
+            # Configure meter (thread not started yet — brief sleeps are safe here)
             self.log_event("Configuring meter...")
             self.serial_obj.sendMsg(":INITIATE:CONTINUOUS ON")
             time.sleep(0.1)
@@ -362,13 +408,22 @@ class MainWindow(QDialog):
             self.consecutive_same = 0
             self.consecutive_timeouts = 0
             self.log_model.setStringList([])
-            self.last_health_check = time.time()
-            
+
             self.append_log("Auto Hold enabled. Polling FETC?...")
             self.log_event("Device configured and polling started")
             self.set_status(f"Connected on {self.current_port} (polling)", "green")
-            self.timer.start(POLL_INTERVAL_MS)
-            self.health_check_timer.start(5000)  # Health check every 5 seconds
+
+            # Start background poll thread — all serial I/O moves off the main thread
+            self.poll_thread = PollWorkerThread(
+                self.serial_obj, POLL_INTERVAL_MS, health_check_interval=30
+            )
+            self.poll_thread.result_ready.connect(self.on_fetch_result)
+            self.poll_thread.health_ok.connect(
+                lambda idn: self.log_event(f"Health check passed: {idn}")
+            )
+            self.poll_thread.health_fail.connect(self.handle_comm_error)
+            self.poll_thread.start()
+
             self.retry_upload_timer.start(10000)  # Retry pending uploads every 10 seconds
         except Exception as e:
             self.log_event(f"Connection failed: {e}")
@@ -376,15 +431,9 @@ class MainWindow(QDialog):
             self.set_status("Connection failed", "red")
             self.connected = False
 
-    def poll_fetch(self):
+    def on_fetch_result(self, msg):
+        """Process a FETC? result emitted by PollWorkerThread (runs on main thread)."""
         if not self.connected:
-            return
-        try:
-            msg = self.serial_obj.SendQueryMsg("FETC?", 2)
-        except Exception as e:
-            self.log_event(f"FETC? query exception: {e}")
-            self.append_log(f"Error: {e}")
-            self.handle_comm_error(str(e))
             return
 
         now = datetime.now()
@@ -407,7 +456,7 @@ class MainWindow(QDialog):
             self.append_log(f"[{time_str}] Error: {msg}")
             self.handle_comm_error(msg)
             return
-        
+
         # Successful read - reset timeout counter
         self.consecutive_timeouts = 0
 
@@ -447,13 +496,13 @@ class MainWindow(QDialog):
         if record:
             pass_result, result_text = self.compare_spec(msg)
             cleaned_model = self.cleaned_model.strip()
-            
+
             current_time = datetime.now()
-            can_insert = (self.last_db_insert_time is None or 
+            can_insert = (self.last_db_insert_time is None or
                          (current_time - self.last_db_insert_time).total_seconds() >= 5)
-            
+
             print(f"DEBUG: cleaned_model='{cleaned_model}', can_insert={can_insert}, value={msg}")
-            
+
             # Ensure model is set; if empty, prompt once at record time
             if not cleaned_model:
                 text, ok = QInputDialog.getText(self, "Model", "Enter model text:")
@@ -499,10 +548,10 @@ class MainWindow(QDialog):
             else:
                 db_status = "(DB: Wait 10s)"
                 print(f"DEBUG: Waiting for 10s interval - last insert was {(current_time - self.last_db_insert_time).total_seconds():.1f}s ago")
-            
+
             log_line = f"{time_str}  {msg}  {result_text}  {csv_status}  {db_status}"
             self.append_log(log_line)
-            
+
             # Update judgement indicator
             self.set_judgement_status(pass_result)
         # Removed logging of unstable readings - only log stable data
@@ -515,17 +564,17 @@ class MainWindow(QDialog):
             self.log_event(f"Database upload failed: {error_msg}")
             pending_count = self.db_manager.get_pending_count()
             self.append_log(f"! Upload failed - {pending_count} queued for retry")
-    
+
     def retry_pending_uploads(self):
         """Periodically retry all pending uploads when connected."""
         if not self.connected:
             return
-        
+
         pending_count = self.db_manager.get_pending_count()
         if pending_count > 0:
             self.log_event(f"Retrying {pending_count} pending uploads...")
             self.db_manager.retry_pending_uploads(self.on_retry_complete)
-    
+
     def on_retry_complete(self, success_count, failed_count, remaining_count):
         """Callback when retry batch completes."""
         self.log_event(f"Retry result: {success_count} uploaded, {failed_count} failed, {remaining_count} pending")
@@ -534,34 +583,11 @@ class MainWindow(QDialog):
         else:
             self.append_log(f"All uploads successful!")
 
-    def check_connection_health(self):
-        """Periodically verify device is still connected by checking port state and sending heartbeat."""
-        if not self.connected:
-            return
-        try:
-            # Check if port is still open
-            if not self.serial_obj.is_port_open():
-                self.log_event("Health check: Port is no longer open")
-                self.handle_comm_error("Port no longer open")
-                return
-            
-            # Optional: Send periodic *IDN? to verify device is responsive (every 30 seconds)
-            current_time = time.time()
-            if self.last_health_check is None or (current_time - self.last_health_check) >= self.health_check_interval:
-                self.log_event("Health check: Sending *IDN? to verify device")
-                response = self.serial_obj.SendQueryMsg("*IDN?", 1)
-                self.last_health_check = current_time
-                if response.startswith("Error") or response == "Timeout Error":
-                    self.log_event(f"Health check failed: {response}")
-                    self.handle_comm_error(f"Device health check failed: {response}")
-                else:
-                    self.log_event(f"Health check passed: {response}")
-        except Exception as e:
-            self.log_event(f"Health check exception: {e}")
-            self.handle_comm_error(str(e))
-
     def handle_comm_error(self, msg):
         """Recover from serial I/O failures by resetting connection and retrying detection."""
+        if not self.connected:
+            return
+
         error_lower = msg.lower() if isinstance(msg, str) else ""
         reconnect_keywords = (
             "input/output error",
@@ -584,8 +610,7 @@ class MainWindow(QDialog):
         trigger_reconnect = any(k in error_lower for k in reconnect_keywords)
         if trigger_reconnect:
             self.log_event(f"Communication error detected: {msg} - Initiating reconnection")
-            self.timer.stop()
-            self.health_check_timer.stop()
+            self._stop_poll_thread()
             self._close_serial_connection()
             self.connected = False
             self.current_port = None
@@ -600,18 +625,21 @@ class MainWindow(QDialog):
         else:
             self.log_event(f"Non-critical error (no reconnect): {msg}")
 
+    def _stop_poll_thread(self):
+        if self.poll_thread is not None:
+            self.poll_thread.stop()
+            self.poll_thread = None
+
     def _close_serial_connection(self):
-        if self.connected:
-            try:
-                self.log_event("Closing serial connection")
-                self.serial_obj.close()
-            except Exception as e:
-                self.log_event(f"Error during connection close: {e}")
+        try:
+            self.log_event("Closing serial connection")
+            self.serial_obj.close()
+        except Exception as e:
+            self.log_event(f"Error during connection close: {e}")
 
     def stop_mode(self):
         self.log_event("Measurement stopped by user")
-        self.timer.stop()
-        self.health_check_timer.stop()
+        self._stop_poll_thread()
         self.retry_upload_timer.stop()
         self._close_serial_connection()
         self.connected = False
@@ -619,8 +647,11 @@ class MainWindow(QDialog):
 
     def closeEvent(self, event):
         self.log_event("Application closing")
-        self.timer.stop()
-        self.health_check_timer.stop()
+        # Stop poll thread and wait for clean exit before closing the serial port
+        if self.poll_thread is not None:
+            self.poll_thread.stop()
+            self.poll_thread.wait(3000)
+            self.poll_thread = None
         self.retry_upload_timer.stop()
         self.detect_retry_timer.stop()
         self._close_serial_connection()
@@ -659,7 +690,7 @@ class MainWindow(QDialog):
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
         full_msg = f"[{timestamp}] {event_text}"
         print(full_msg)
-    
+
     def append_log(self, text):
         """Append a line to the list view logger."""
         items = self.log_model.stringList()
