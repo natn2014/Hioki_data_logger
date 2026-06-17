@@ -89,7 +89,7 @@ class Ui_Dialog(object):
 
         self.groupBox_MeasureValue = QGroupBox(self.groupBox_Resistance)
         self.groupBox_MeasureValue.setObjectName(u"groupBox_MeasureValue")
-        self.groupBox_MeasureValue.setMinimumSize(QSize(670, 0))
+        self.groupBox_MeasureValue.setMinimumSize(QSize(300, 0))
         font4 = QFont()
         font4.setPointSize(24)
         font4.setBold(True)
