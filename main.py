@@ -31,6 +31,42 @@ CONFIG_FILE = "gui_mode5_config.json"
 MAX_VALID_OHMS = 1e12  # ignore readings above this magnitude
 CSV_HEADERS = ["Timestamp", "Resistance", "Status", "Model", "Date", "Time", "DB_Status"]
 
+# AIM Code 39 Extended escape sequences (see barcodereader.md)
+AIM_MAP = {
+    '/A': ' ',  '/B': '!',  '/C': '"',  '/D': ',',
+    '/E': '%',  '/F': '&',  '/G': "'",  '/H': '(',
+    '/I': ')',  '/J': '*',  '/K': '+',  '/L': '/',
+    '/M': ':',  '/N': ';',  '/O': '<',  '/P': '=',
+    '/Q': '>',  '/R': '?',  '/S': '@',  '/T': '[',
+    '/U': '\\', '/V': ']',  '/W': '^',  '/X': '_',
+    '/Y': '`',  '/Z': '{',
+}
+
+
+def decode_barcode(raw):
+    """Decode AIM Code 39 Extended barcode string to a plain model number.
+
+    Strips the leading check-digit character, converts /X escape pairs to their
+    real characters, and stops at /D (field separator).
+    """
+    if not raw:
+        return ''
+    s = raw[1:]  # strip check-digit / scanner prefix
+    result = ''
+    i = 0
+    while i < len(s):
+        if s[i] == '/' and i + 1 < len(s):
+            code = s[i:i + 2].upper()
+            if code == '/D':
+                break
+            if code in AIM_MAP:
+                result += AIM_MAP[code]
+                i += 2
+                continue
+        result += s[i]
+        i += 1
+    return result.strip()
+
 
 class AutoDetectThread(QThread):
     found = Signal(str, str)  # port, idn
@@ -137,6 +173,12 @@ class MainWindow(QDialog):
         self.upper_limit = 1000.0
         self.cleaned_model = ""
         self.last_db_insert_time = None
+
+        # Barcode scanner input accumulator (USB HID scanner types as keyboard)
+        self._barcode_buffer = ""
+        self._barcode_timer = QTimer(self)
+        self._barcode_timer.setSingleShot(True)
+        self._barcode_timer.timeout.connect(self._on_barcode_timer)
 
         # Connection health and recovery settings
         self.reconnect_delay = 1.0  # Start with 1 second, exponential backoff
@@ -355,6 +397,51 @@ class MainWindow(QDialog):
                         print(f"DEBUG: Loaded limits for model '{self.cleaned_model}': {self.lower_limit} - {self.upper_limit}")
         except Exception as e:
             print(f"Error loading model limits: {e}")
+
+    def keyPressEvent(self, event):
+        """Intercept USB HID barcode scanner keystrokes.
+
+        The scanner types all characters rapidly then sends Enter.  Printable
+        characters are accumulated in _barcode_buffer; Enter (or the 100 ms
+        debounce timer) triggers decoding.  When no barcode is in progress the
+        Enter key falls through to normal dialog handling.
+        """
+        key = event.key()
+        text = event.text()
+        if key in (Qt.Key_Return, Qt.Key_Enter):
+            if self._barcode_buffer:
+                self._barcode_timer.stop()
+                self._handle_barcode_input()
+                event.accept()
+                return
+        elif text and text.isprintable():
+            self._barcode_buffer += text
+            self._barcode_timer.start(100)
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def _on_barcode_timer(self):
+        """Fires 100 ms after the last character — handles scanners without Enter."""
+        self._handle_barcode_input()
+
+    def _handle_barcode_input(self):
+        """Decode accumulated barcode buffer and apply it as the current model."""
+        raw = self._barcode_buffer
+        self._barcode_buffer = ""
+        if len(raw) < 3:
+            return
+        decoded = decode_barcode(raw)
+        if not decoded:
+            self.log_event(f"Barcode scan: decode failed for '{raw}'")
+            self.append_log(f"Barcode: unrecognised format — {raw}")
+            return
+        self.log_event(f"Barcode scan: '{raw}' → '{decoded}'")
+        self.cleaned_model = decoded
+        self.ui.pushButton_model.setText(decoded)
+        self.load_model_limits()
+        self.save_config()
+        self.append_log(f"Model set via barcode: {decoded}")
 
     def compare_spec(self, value_str):
         """Compare reading with spec limits. Returns (pass, result_text)"""
