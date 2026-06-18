@@ -433,7 +433,7 @@ class MainWindow(QDialog):
             self.poll_thread.health_fail.connect(self.handle_comm_error)
             self.poll_thread.start()
 
-            self.retry_upload_timer.start(10000)  # Retry pending uploads every 10 seconds
+            self.retry_upload_timer.start(5000)   # Check every 5 s; DBUploadManager gates actual retries via backoff
         except Exception as e:
             self.log_event(f"Connection failed: {e}")
             QMessageBox.critical(self, "Connection Error", str(e))
@@ -566,31 +566,45 @@ class MainWindow(QDialog):
         # Removed logging of unstable readings - only log stable data
 
     def on_upload_complete(self, success, error_msg):
-        """Callback when async upload completes."""
+        """Callback when async upload completes (runs on main thread)."""
         if success:
             self.log_event("Database upload successful")
+            # Server just confirmed reachable — flush any queued records immediately
+            pending = self.db_manager.get_pending_count()
+            if pending > 0:
+                self.log_event(f"Server reachable — flushing {pending} queued record(s)")
+                self.append_log(f"Server back — uploading {pending} queued record(s)...")
+                self.db_manager.retry_pending_uploads()
         else:
             self.log_event(f"Database upload failed: {error_msg}")
-            pending_count = self.db_manager.get_pending_count()
-            self.append_log(f"! Upload failed - {pending_count} queued for retry")
+            count, wait, _ = self.db_manager.get_queue_status()
+            wait_str = f"{int(wait)}s" if wait > 1 else "soon"
+            self.append_log(f"! DB unreachable — {count} queued, retry in {wait_str}")
 
     def retry_pending_uploads(self):
-        """Periodically retry all pending uploads when connected."""
+        """Timer callback — let DBUploadManager decide whether the backoff window has elapsed."""
         if not self.connected:
             return
-
-        pending_count = self.db_manager.get_pending_count()
-        if pending_count > 0:
-            self.log_event(f"Retrying {pending_count} pending uploads...")
-            self.db_manager.retry_pending_uploads(self.on_retry_complete)
+        count, wait, reachable = self.db_manager.get_queue_status()
+        if count > 0 and self.db_manager.should_retry_now():
+            self.log_event(f"Backoff elapsed — attempting batch upload of {count} pending record(s)")
+            self.db_manager.retry_pending_uploads()
 
     def on_retry_complete(self, success_count, failed_count, remaining_count):
-        """Callback when retry batch completes."""
-        self.log_event(f"Retry result: {success_count} uploaded, {failed_count} failed, {remaining_count} pending")
-        if remaining_count > 0:
-            self.append_log(f"Retry: {success_count}✓ {failed_count}✗ ({remaining_count} pending)")
+        """Callback when a batch retry finishes (runs on main thread)."""
+        if remaining_count == 0 and success_count > 0:
+            self.log_event(f"Batch upload complete: {success_count} record(s) sent")
+            self.append_log(f"Batch upload done — {success_count} record(s) sent")
+        elif success_count > 0:
+            count, wait, _ = self.db_manager.get_queue_status()
+            wait_str = f"{int(wait)}s"
+            self.log_event(f"Partial batch: {success_count} uploaded, {remaining_count} still pending")
+            self.append_log(f"Partial upload: {success_count}✓ — {remaining_count} pending, retry in {wait_str}")
         else:
-            self.append_log(f"All uploads successful!")
+            count, wait, _ = self.db_manager.get_queue_status()
+            wait_str = f"{int(wait)}s"
+            self.log_event(f"Batch retry failed — {remaining_count} record(s) still pending")
+            self.append_log(f"! Retry failed — {remaining_count} queued, next in {wait_str}")
 
     def handle_comm_error(self, msg):
         """Recover from serial I/O failures by resetting connection and retrying detection."""

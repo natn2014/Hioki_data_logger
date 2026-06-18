@@ -20,11 +20,13 @@ def insert_to_mssql(model, value, status, timeout=5):
     password = 'Engineering@user'
     driver = '{ODBC Driver 18 for SQL Server}'
 
-    # "Connect Timeout" is the correct ODBC key; pyodbc's timeout kwarg is the
-    # login-timeout fallback.  Both are set so either enforcement path fires first.
+    # Connect Timeout: TCP handshake + login timeout.
+    # CommandTimeout: per-query deadline enforced by ODBC Driver 18.
+    # Both are set so either enforcement path fires first.
     conn_str = (f'DRIVER={driver};SERVER={server};DATABASE={database};'
                 f'UID={username};PWD={password};'
-                f'Connect Timeout={timeout};TrustServerCertificate=yes')
+                f'Connect Timeout={timeout};CommandTimeout={timeout};'
+                f'TrustServerCertificate=yes')
 
     result = {'conn': None, 'error': None}
 
@@ -46,6 +48,7 @@ def insert_to_mssql(model, value, status, timeout=5):
         raise RuntimeError(f"Error connecting to MSSQL: {result['error']}") from result['error']
 
     conn = result['conn']
+    conn.timeout = timeout  # pyodbc query-level timeout (backup to CommandTimeout)
     try:
         cursor = conn.cursor()
         current_date = datetime.now().strftime('%Y-%m-%d')
@@ -55,14 +58,35 @@ def insert_to_mssql(model, value, status, timeout=5):
             VALUES (getdate(), ?, ?, ?, ?, ?)
         """
         params = (value, status, model, current_date, current_time)
-        cursor.execute(sql_query, params)
-        conn.commit()
+
+        # Wrap execute+commit in a thread so a hung query can't block the caller
+        # indefinitely even if pyodbc/GIL behaviour is non-ideal on ARM.
+        exec_result = {'error': None, 'done': False}
+
+        def _execute():
+            try:
+                cursor.execute(sql_query, params)
+                conn.commit()
+                exec_result['done'] = True
+            except Exception as e:
+                exec_result['error'] = e
+
+        exec_thread = threading.Thread(target=_execute, daemon=True)
+        exec_thread.start()
+        exec_thread.join(timeout=timeout)
+
+        if exec_thread.is_alive():
+            raise RuntimeError(f"Database query timed out after {timeout}s")
+        if exec_result['error']:
+            raise RuntimeError(f"Error inserting to MSSQL: {exec_result['error']}") from exec_result['error']
+
         print("Data inserted successfully into MSSQL.")
         return True
-    except Exception as e:
-        raise RuntimeError(f"Error inserting to MSSQL: {e}") from e
     finally:
-        conn.close()
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 if __name__ == "__main__":
     # Manual test entry; will not run when imported

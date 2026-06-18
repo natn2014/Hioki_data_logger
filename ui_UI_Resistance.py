@@ -30,6 +30,8 @@ class Ui_Dialog(object):
         Dialog.setSizePolicy(sizePolicy)
         self.verticalLayout = QVBoxLayout(Dialog)
         self.verticalLayout.setObjectName(u"verticalLayout")
+
+        # ── Status bar (connection + model button) ────────────────────────────
         self.groupBox_status = QGroupBox(Dialog)
         self.groupBox_status.setObjectName(u"groupBox_status")
         font = QFont()
@@ -39,7 +41,6 @@ class Ui_Dialog(object):
         self.horizontalLayout_2.setObjectName(u"horizontalLayout_2")
         self.label_ConnectionStatus = QLabel(self.groupBox_status)
         self.label_ConnectionStatus.setObjectName(u"label_ConnectionStatus")
-
         self.horizontalLayout_2.addWidget(self.label_ConnectionStatus)
 
         self.pushButton_model = QPushButton(self.groupBox_status)
@@ -48,48 +49,21 @@ class Ui_Dialog(object):
         font1 = QFont()
         font1.setPointSize(25)
         self.pushButton_model.setFont(font1)
-
         self.horizontalLayout_2.addWidget(self.pushButton_model)
-
 
         self.verticalLayout.addWidget(self.groupBox_status)
 
+        # ── Resistance row ────────────────────────────────────────────────────
+        # Layout: [Measured — wide, stretch=3] | divider | [Upper / Lower — stacked, stretch=1]
         self.groupBox_Resistance = QGroupBox(Dialog)
         self.groupBox_Resistance.setObjectName(u"groupBox_Resistance")
         self.groupBox_Resistance.setFont(font)
         self.horizontalLayout = QHBoxLayout(self.groupBox_Resistance)
         self.horizontalLayout.setObjectName(u"horizontalLayout")
-        self.groupBox_LowerLimit = QGroupBox(self.groupBox_Resistance)
-        self.groupBox_LowerLimit.setObjectName(u"groupBox_LowerLimit")
-        font2 = QFont()
-        font2.setPointSize(24)
-        self.groupBox_LowerLimit.setFont(font2)
-        self.verticalLayout_3 = QVBoxLayout(self.groupBox_LowerLimit)
-        self.verticalLayout_3.setObjectName(u"verticalLayout_3")
-        self.doubleSpinBox_lowerLimit = QDoubleSpinBox(self.groupBox_LowerLimit)
-        self.doubleSpinBox_lowerLimit.setObjectName(u"doubleSpinBox_lowerLimit")
-        font3 = QFont()
-        font3.setPointSize(38)
-        self.doubleSpinBox_lowerLimit.setFont(font3)
-        self.doubleSpinBox_lowerLimit.setAlignment(Qt.AlignCenter)
-        self.doubleSpinBox_lowerLimit.setButtonSymbols(QAbstractSpinBox.PlusMinus)
-        self.doubleSpinBox_lowerLimit.setDecimals(3)
 
-        self.verticalLayout_3.addWidget(self.doubleSpinBox_lowerLimit)
-
-
-        self.horizontalLayout.addWidget(self.groupBox_LowerLimit)
-
-        self.line = QFrame(self.groupBox_Resistance)
-        self.line.setObjectName(u"line")
-        self.line.setFrameShape(QFrame.VLine)
-        self.line.setFrameShadow(QFrame.Sunken)
-
-        self.horizontalLayout.addWidget(self.line)
-
+        # ── Left: Measured value (dominant width) ─────────────────────────────
         self.groupBox_MeasureValue = QGroupBox(self.groupBox_Resistance)
         self.groupBox_MeasureValue.setObjectName(u"groupBox_MeasureValue")
-        self.groupBox_MeasureValue.setMinimumSize(QSize(300, 0))
         font4 = QFont()
         font4.setPointSize(24)
         font4.setBold(True)
@@ -100,45 +74,63 @@ class Ui_Dialog(object):
         self.doubleSpinBox_Measure = QDoubleSpinBox(self.groupBox_MeasureValue)
         self.doubleSpinBox_Measure.setObjectName(u"doubleSpinBox_Measure")
         font5 = QFont()
-        font5.setPointSize(48)
+        font5.setPointSize(72)
         font5.setBold(True)
         font5.setWeight(75)
         self.doubleSpinBox_Measure.setFont(font5)
         self.doubleSpinBox_Measure.setAlignment(Qt.AlignCenter)
         self.doubleSpinBox_Measure.setDecimals(3)
-
         self.verticalLayout_4.addWidget(self.doubleSpinBox_Measure)
+        self.horizontalLayout.addWidget(self.groupBox_MeasureValue, 3)  # stretch=3
 
+        # ── Vertical divider ──────────────────────────────────────────────────
+        self.line = QFrame(self.groupBox_Resistance)
+        self.line.setObjectName(u"line")
+        self.line.setFrameShape(QFrame.VLine)
+        self.line.setFrameShadow(QFrame.Sunken)
+        self.horizontalLayout.addWidget(self.line)
 
-        self.horizontalLayout.addWidget(self.groupBox_MeasureValue)
+        # ── Right: Upper Limit (top) + Lower Limit (bottom) ───────────────────
+        self.right_limits_layout = QVBoxLayout()
 
-        self.line_2 = QFrame(self.groupBox_Resistance)
-        self.line_2.setObjectName(u"line_2")
-        self.line_2.setFrameShape(QFrame.VLine)
-        self.line_2.setFrameShadow(QFrame.Sunken)
-
-        self.horizontalLayout.addWidget(self.line_2)
+        font_limit_group = QFont()
+        font_limit_group.setPointSize(18)
+        font_limit_spin = QFont()
+        font_limit_spin.setPointSize(30)
 
         self.groupBox_UpperLimit = QGroupBox(self.groupBox_Resistance)
         self.groupBox_UpperLimit.setObjectName(u"groupBox_UpperLimit")
-        self.groupBox_UpperLimit.setFont(font2)
+        self.groupBox_UpperLimit.setFont(font_limit_group)
         self.verticalLayout_5 = QVBoxLayout(self.groupBox_UpperLimit)
         self.verticalLayout_5.setObjectName(u"verticalLayout_5")
         self.doubleSpinBox_UpperLimit = QDoubleSpinBox(self.groupBox_UpperLimit)
         self.doubleSpinBox_UpperLimit.setObjectName(u"doubleSpinBox_UpperLimit")
-        self.doubleSpinBox_UpperLimit.setFont(font3)
+        self.doubleSpinBox_UpperLimit.setFont(font_limit_spin)
         self.doubleSpinBox_UpperLimit.setAlignment(Qt.AlignCenter)
         self.doubleSpinBox_UpperLimit.setButtonSymbols(QAbstractSpinBox.PlusMinus)
         self.doubleSpinBox_UpperLimit.setDecimals(3)
-
         self.verticalLayout_5.addWidget(self.doubleSpinBox_UpperLimit)
+        self.right_limits_layout.addWidget(self.groupBox_UpperLimit)
 
+        self.groupBox_LowerLimit = QGroupBox(self.groupBox_Resistance)
+        self.groupBox_LowerLimit.setObjectName(u"groupBox_LowerLimit")
+        self.groupBox_LowerLimit.setFont(font_limit_group)
+        self.verticalLayout_3 = QVBoxLayout(self.groupBox_LowerLimit)
+        self.verticalLayout_3.setObjectName(u"verticalLayout_3")
+        self.doubleSpinBox_lowerLimit = QDoubleSpinBox(self.groupBox_LowerLimit)
+        self.doubleSpinBox_lowerLimit.setObjectName(u"doubleSpinBox_lowerLimit")
+        self.doubleSpinBox_lowerLimit.setFont(font_limit_spin)
+        self.doubleSpinBox_lowerLimit.setAlignment(Qt.AlignCenter)
+        self.doubleSpinBox_lowerLimit.setButtonSymbols(QAbstractSpinBox.PlusMinus)
+        self.doubleSpinBox_lowerLimit.setDecimals(3)
+        self.verticalLayout_3.addWidget(self.doubleSpinBox_lowerLimit)
+        self.right_limits_layout.addWidget(self.groupBox_LowerLimit)
 
-        self.horizontalLayout.addWidget(self.groupBox_UpperLimit)
-
+        self.horizontalLayout.addLayout(self.right_limits_layout, 1)  # stretch=1
 
         self.verticalLayout.addWidget(self.groupBox_Resistance)
 
+        # ── Judgement ─────────────────────────────────────────────────────────
         self.groupBox_Judge = QGroupBox(Dialog)
         self.groupBox_Judge.setObjectName(u"groupBox_Judge")
         self.groupBox_Judge.setFont(font)
@@ -149,12 +141,10 @@ class Ui_Dialog(object):
         font6 = QFont()
         font6.setPointSize(48)
         self.pushButton_Judgement.setFont(font6)
-
         self.verticalLayout_2.addWidget(self.pushButton_Judgement)
-
-
         self.verticalLayout.addWidget(self.groupBox_Judge)
 
+        # ── Data Log ──────────────────────────────────────────────────────────
         self.groupBox = QGroupBox(Dialog)
         self.groupBox.setObjectName(u"groupBox")
         self.groupBox.setMinimumSize(QSize(0, 100))
@@ -164,15 +154,10 @@ class Ui_Dialog(object):
         self.verticalLayout_6.setObjectName(u"verticalLayout_6")
         self.listView_logger = QListView(self.groupBox)
         self.listView_logger.setObjectName(u"listView_logger")
-
         self.verticalLayout_6.addWidget(self.listView_logger)
-
-
         self.verticalLayout.addWidget(self.groupBox)
 
-
         self.retranslateUi(Dialog)
-
         QMetaObject.connectSlotsByName(Dialog)
     # setupUi
 
@@ -182,12 +167,11 @@ class Ui_Dialog(object):
         self.label_ConnectionStatus.setText(QCoreApplication.translate("Dialog", u"Connection Status", None))
         self.pushButton_model.setText(QCoreApplication.translate("Dialog", u"Model", None))
         self.groupBox_Resistance.setTitle(QCoreApplication.translate("Dialog", u"Resistance", None))
+        self.groupBox_MeasureValue.setTitle(QCoreApplication.translate("Dialog", u"Measured", None))
+        self.groupBox_UpperLimit.setTitle(QCoreApplication.translate("Dialog", u"Upper Limit", None))
         self.groupBox_LowerLimit.setTitle(QCoreApplication.translate("Dialog", u"Lower Limit", None))
         self.doubleSpinBox_lowerLimit.setSuffix("")
-        self.groupBox_MeasureValue.setTitle(QCoreApplication.translate("Dialog", u"Measured ", None))
-        self.groupBox_UpperLimit.setTitle(QCoreApplication.translate("Dialog", u"Upper Limit", None))
         self.groupBox_Judge.setTitle(QCoreApplication.translate("Dialog", u"Judgement", None))
         self.pushButton_Judgement.setText(QCoreApplication.translate("Dialog", u"PASS", None))
         self.groupBox.setTitle(QCoreApplication.translate("Dialog", u"Data Log", None))
     # retranslateUi
-
