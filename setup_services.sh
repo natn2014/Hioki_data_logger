@@ -9,7 +9,7 @@ set -e  # stop on any error
 # ── Configuration ────────────────────────────────────────────────────────────
 APP_USER="${SUDO_USER:-pi}"                         # the user who ran sudo
 APP_DIR="/home/$APP_USER/Hioki_data_logger"
-PYTHON="$APP_DIR/.venv/bin/python3"
+PYTHON="$(which python3)"
 SERVICE_DIR="/etc/systemd/system"
 # ─────────────────────────────────────────────────────────────────────────────
 
