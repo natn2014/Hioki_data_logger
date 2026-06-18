@@ -81,8 +81,7 @@ class DBUploadManager:
                     callback(True, None)
             except Exception as e:
                 print(f"[DBUploadManager] Upload failed: {e}")
-                with self.upload_lock:
-                    self.add_pending_upload(model, value, status)
+                self.add_pending_upload(model, value, status)
                 
                 if self.parent_signals:
                     self.parent_signals.upload_complete.emit(False, str(e))
@@ -102,50 +101,48 @@ class DBUploadManager:
             failed_count = 0
             success_count = 0
             retry_start_time = time.time()
-            
-            with self.upload_lock:
-                pending_list = self.pending_uploads.copy()
-            
-            for i, record in enumerate(pending_list):
-                # Check if retry batch is taking too long (prevent hanging)
-                elapsed = time.time() - retry_start_time
-                if elapsed > self.MAX_RETRY_TIME:
-                    print(f"[DBUploadManager] Retry timeout ({elapsed:.1f}s > {self.MAX_RETRY_TIME}s), stopping batch")
-                    break
-                
-                try:
-                    print(f"[DBUploadManager] Retrying upload [{i+1}/{len(pending_list)}]: {record['model']} = {record['value']}")
-                    insert_to_mssql(record['model'], record['value'], record['status'], timeout=self.UPLOAD_TIMEOUT)
-                    
-                    # Remove from pending list
-                    with self.upload_lock:
-                        if record in self.pending_uploads:
-                            self.pending_uploads.remove(record)
-                    success_count += 1
-                    print(f"[DBUploadManager] Retry successful: {record['model']}")
-                    
-                except Exception as e:
-                    print(f"[DBUploadManager] Retry failed: {e}")
-                    # Update retry count
-                    with self.upload_lock:
-                        if record in self.pending_uploads:
-                            idx = self.pending_uploads.index(record)
-                            self.pending_uploads[idx]['retry_count'] += 1
-                    failed_count += 1
-                    time.sleep(0.2)  # Brief delay between retries
-            
-            # Save updated pending list
-            self.save_pending_uploads()
-            
-            total_elapsed = time.time() - retry_start_time
-            print(f"[DBUploadManager] Retry complete in {total_elapsed:.2f}s: {success_count} succeeded, {failed_count} failed, {len(self.pending_uploads)} remaining")
-            
-            if self.parent_signals:
-                self.parent_signals.retry_complete.emit(success_count, failed_count, len(self.pending_uploads))
-            elif callback:
-                callback(success_count, failed_count, len(self.pending_uploads))
-            
-            self.is_uploading = False
+            try:
+                with self.upload_lock:
+                    pending_list = self.pending_uploads.copy()
+
+                for i, record in enumerate(pending_list):
+                    elapsed = time.time() - retry_start_time
+                    if elapsed > self.MAX_RETRY_TIME:
+                        print(f"[DBUploadManager] Retry timeout ({elapsed:.1f}s > {self.MAX_RETRY_TIME}s), stopping batch")
+                        break
+
+                    try:
+                        print(f"[DBUploadManager] Retrying upload [{i+1}/{len(pending_list)}]: {record['model']} = {record['value']}")
+                        insert_to_mssql(record['model'], record['value'], record['status'], timeout=self.UPLOAD_TIMEOUT)
+
+                        with self.upload_lock:
+                            if record in self.pending_uploads:
+                                self.pending_uploads.remove(record)
+                        success_count += 1
+                        print(f"[DBUploadManager] Retry successful: {record['model']}")
+
+                    except Exception as e:
+                        print(f"[DBUploadManager] Retry failed: {e}")
+                        with self.upload_lock:
+                            if record in self.pending_uploads:
+                                idx = self.pending_uploads.index(record)
+                                self.pending_uploads[idx]['retry_count'] += 1
+                        failed_count += 1
+                        time.sleep(0.2)
+
+                total_elapsed = time.time() - retry_start_time
+                print(f"[DBUploadManager] Retry complete in {total_elapsed:.2f}s: {success_count} succeeded, {failed_count} failed, {len(self.pending_uploads)} remaining")
+
+                if self.parent_signals:
+                    self.parent_signals.retry_complete.emit(success_count, failed_count, len(self.pending_uploads))
+                elif callback:
+                    callback(success_count, failed_count, len(self.pending_uploads))
+
+            except Exception as e:
+                print(f"[DBUploadManager] Unexpected error in retry_worker: {e}")
+            finally:
+                self.save_pending_uploads()
+                self.is_uploading = False
         
         thread = Thread(target=retry_worker, daemon=True)
         thread.start()

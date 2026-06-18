@@ -1,7 +1,6 @@
 [Unit]
 Description=Hioki Data Logger
-After=network.target
-# Watchdog will restart this service if it hangs and gets killed
+After=network.target graphical.target
 StartLimitIntervalSec=60
 StartLimitBurst=5
 
@@ -12,10 +11,10 @@ WorkingDirectory=/home/pi/Hioki_data_logger
 ExecStart=/home/pi/Hioki_data_logger/.venv/bin/python3 main.py
 Restart=always
 RestartSec=3
-
-# Allow GUI (needed for Qt on Raspberry Pi desktop)
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=/home/pi/.Xauthority
+Environment=PYTHONUNBUFFERED=1
+Environment=QT_QPA_PLATFORM=xcb
 
 [Install]
 WantedBy=graphical.target

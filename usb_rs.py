@@ -74,10 +74,17 @@ class Usb_rs:
         ret = False
 
         try:
+            if not isinstance(self.ser, serial.Serial) or not self.ser.is_open:
+                self.last_error = "Port is not open"
+                self._report_error("Send Error", "Port is not open")
+                return False
             strMsg = strMsg + '\r\n'                #Add a terminator, CR+LF, to transmitted command
             self.ser.write(bytes(strMsg, 'utf-8'))  #Convert to byte type and send
             self.last_error = ""
             ret = True
+        except serial.SerialException as e:
+            self.last_error = str(e)
+            self._report_error("Send Error", f"Serial error: {e}")
         except Exception as e:
             self.last_error = str(e)
             self._report_error("Send Error", f"{e}")
@@ -89,6 +96,10 @@ class Usb_rs:
         """Receive message optimized for batch reads. Reads up to 64 bytes per iteration."""
         msgBuf = b""
         try:
+            if not isinstance(self.ser, serial.Serial) or not self.ser.is_open:
+                self.last_error = "Port is not open"
+                self._report_error("Receive Error", "Port is not open")
+                return "Error: Port is not open"
             start = time.time()
             while True:
                 # Try to read up to 64 bytes at once (batch reading)
@@ -117,6 +128,10 @@ class Usb_rs:
                             return msg_str
                     self._report_error("Receive Timeout", f"No complete response after {timeout}s (received {len(msgBuf)} bytes)")
                     return "Timeout Error"
+        except serial.SerialException as e:
+            self.last_error = str(e)
+            self._report_error("Receive Error", f"Serial error: {e}")
+            return f"Error: {e}"
         except Exception as e:
             self.last_error = str(e)
             self._report_error("Receive Error", f"{e}")

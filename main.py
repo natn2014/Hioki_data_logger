@@ -77,34 +77,38 @@ class PollWorkerThread(QThread):
     def run(self):
         self._running = True
         last_health_check = time.time()
-        while self._running:
-            t_start = time.time()
+        try:
+            while self._running:
+                t_start = time.time()
 
-            msg = self.serial_obj.SendQueryMsg("FETC?", 2)
-            if not self._running:
-                break
-            self.result_ready.emit(msg)
+                msg = self.serial_obj.SendQueryMsg("FETC?", 2)
+                if not self._running:
+                    break
+                self.result_ready.emit(msg)
 
-            # Periodic *IDN? heartbeat to verify device is still responsive
+                # Periodic *IDN? heartbeat to verify device is still responsive
+                if self._running:
+                    now = time.time()
+                    if now - last_health_check >= self.health_check_interval:
+                        last_health_check = now
+                        idn = self.serial_obj.SendQueryMsg("*IDN?", 1)
+                        if not self._running:
+                            break
+                        if idn.startswith("Error") or idn == "Timeout Error":
+                            self.health_fail.emit(f"Device health check failed: {idn}")
+                        else:
+                            self.health_ok.emit(idn)
+
+                # Interruptible sleep for the remainder of the poll interval
+                elapsed = time.time() - t_start
+                remaining = self.poll_interval - elapsed
+                if remaining > 0 and self._running:
+                    deadline = time.time() + remaining
+                    while self._running and time.time() < deadline:
+                        time.sleep(0.05)
+        except Exception as e:
             if self._running:
-                now = time.time()
-                if now - last_health_check >= self.health_check_interval:
-                    last_health_check = now
-                    idn = self.serial_obj.SendQueryMsg("*IDN?", 1)
-                    if not self._running:
-                        break
-                    if idn.startswith("Error") or idn == "Timeout Error":
-                        self.health_fail.emit(f"Device health check failed: {idn}")
-                    else:
-                        self.health_ok.emit(idn)
-
-            # Interruptible sleep for the remainder of the poll interval
-            elapsed = time.time() - t_start
-            remaining = self.poll_interval - elapsed
-            if remaining > 0 and self._running:
-                deadline = time.time() + remaining
-                while self._running and time.time() < deadline:
-                    time.sleep(0.05)
+                self.health_fail.emit(f"Poll thread crashed unexpectedly: {e}")
 
     def stop(self):
         self._running = False
@@ -398,11 +402,14 @@ class MainWindow(QDialog):
 
             # Configure meter (thread not started yet — brief sleeps are safe here)
             self.log_event("Configuring meter...")
-            self.serial_obj.sendMsg(":INITIATE:CONTINUOUS ON")
+            if not self.serial_obj.sendMsg(":INITIATE:CONTINUOUS ON"):
+                raise RuntimeError(f"Failed to send INITIATE command: {self.serial_obj.last_error}")
             time.sleep(0.1)
-            self.serial_obj.sendMsg(":TRIGGER:SOURCE IMM")
+            if not self.serial_obj.sendMsg(":TRIGGER:SOURCE IMM"):
+                raise RuntimeError(f"Failed to send TRIGGER command: {self.serial_obj.last_error}")
             time.sleep(0.1)
-            self.serial_obj.sendMsg("HOLD:AUTO ON")
+            if not self.serial_obj.sendMsg("HOLD:AUTO ON"):
+                raise RuntimeError(f"Failed to send HOLD command: {self.serial_obj.last_error}")
             time.sleep(0.1)
             # Reset stability state
             self.previous_numeric = None
@@ -695,18 +702,25 @@ class MainWindow(QDialog):
 
     def append_log(self, text):
         """Append a line to the list view logger."""
-        items = self.log_model.stringList()
-        items.append(text)
-        if len(items) > 500:
-            items = items[-500:]
-        self.log_model.setStringList(items)
-        self.ui.listView_logger.scrollToBottom()
+        try:
+            items = self.log_model.stringList()
+            items.append(text)
+            if len(items) > 500:
+                items = items[-500:]
+            self.log_model.setStringList(items)
+            self.ui.listView_logger.scrollToBottom()
+        except RuntimeError:
+            pass  # Widget already destroyed during shutdown
 
 
 def main():
     app = QApplication(sys.argv)
-    w = MainWindow()
-    w.showFullScreen()
+    try:
+        w = MainWindow()
+        w.showFullScreen()
+    except Exception as e:
+        QMessageBox.critical(None, "Startup Error", f"Failed to initialize application:\n{e}")
+        sys.exit(1)
     sys.exit(app.exec_())
 
 

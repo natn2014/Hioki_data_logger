@@ -9,8 +9,9 @@ A Python GUI application that reads resistance measurements from HIOKI multimete
 - Per-model pass/fail limit configuration
 - Local CSV logging (daily files, no data loss on DB failure)
 - Background database uploads with persistent retry queue
-- Automatic reconnection with exponential backoff
-- Deployable as a systemd service on Raspberry Pi 5
+- Automatic reconnection with exponential backoff on serial errors
+- Process watchdog that kills and restarts a hung app
+- Deployable as systemd services on Raspberry Pi 5
 
 ## Requirements
 
@@ -24,7 +25,8 @@ pyodbc
 
 **Database:** Microsoft SQL Server with ODBC Driver 18 for SQL Server installed.
 
-**Hardware:** HIOKI resistance meter with SCPI support connected via USB or RS-232 (tested models: RM3544-01, RM3545, RM3542, DM7276, DM7275, IM7580A).
+**Hardware:** HIOKI resistance meter with SCPI support connected via USB or RS-232.
+Tested models: RM3544-01, RM3545, RM3542, DM7276, DM7275, IM7580A.
 
 ## Setup
 
@@ -38,29 +40,38 @@ pip install PySide2 pyserial pyodbc
 
 Edit [insert_resistance2db.py](insert_resistance2db.py) and update the connection parameters:
 
+```python
+server   = '172.18.72.16'     # SQL Server IP or hostname
+database = 'ENGINEER_DB'
+username = 'engineering_user'
+password = 'Engineering@user'
+```
 
+Target table schema:
 
-The target table requires these columns: `Timestamp`, `Resistance`, `Status`, `Model`, `Date`, `Time`.
+```sql
+CREATE TABLE resistance (
+    Timestamp  DATETIME DEFAULT GETDATE(),
+    Resistance FLOAT,
+    Status     NVARCHAR(10),   -- 'OK', 'NG', or 'N/A'
+    Model      NVARCHAR(100),
+    [Date]     DATE,
+    [Time]     TIME
+);
+```
 
 ### 3. Configure measurement limits
 
-Edit [config.json](config.json) to define per-model pass/fail thresholds:
+Limits are stored in `gui_mode5_config.json` and managed at runtime via the **Model** button in the GUI. To pre-set them manually:
 
 ```json
 {
-  "lower_limit": 0.1,
-  "upper_limit": 10,
-  "current_model": "MODEL_NAME",
+  "current_model": "MODEL_A",
   "models": {
-    "MODEL_NAME": {
-      "lower_limit": 0.01,
-      "upper_limit": 14.0
-    }
+    "MODEL_A": { "lower_limit": 0.01, "upper_limit": 14.0 }
   }
 }
 ```
-
-Limits can also be changed at runtime via the **Model** button in the GUI.
 
 ## Running
 
@@ -68,58 +79,67 @@ Limits can also be changed at runtime via the **Model** button in the GUI.
 python main.py
 ```
 
-The application auto-detects the connected HIOKI device. Once connected, it polls for stable measurements and logs each result to a daily CSV file (`YYYYMMDD.csv`) and uploads to the database in the background.
+The application starts full-screen, auto-detects the connected HIOKI device, and begins polling once a device is found. Click **Model** to enter a product model name before recording measurements.
 
 ## Project Structure
 
 ```
-├── main.py                    # Main GUI application (PySide2)
-├── usb_rs.py                  # Serial communication wrapper
-├── insert_resistance2db.py    # MSSQL database insertion
-├── db_upload_manager.py       # Background upload queue with retry
-├── ui_UI_Resistance.py        # Generated Qt UI code
-├── UI_Resistance.ui           # Qt Designer UI definition
-├── config.json                # Model limits configuration
-├── gui_mode5_config.json      # Alternate mode configuration
-├── run_hioki_app.sh           # App launcher (venv-aware)
-├── setup_pi_autostart.sh      # Raspberry Pi systemd service installer
-└── monitor_network_status.sh  # Network connectivity monitor
+├── main.py                          # Main GUI application (PySide2)
+├── usb_rs.py                        # Serial communication wrapper
+├── insert_resistance2db.py          # MSSQL database insertion
+├── db_upload_manager.py             # Background upload queue with retry
+├── ui_UI_Resistance.py              # Generated Qt UI code
+├── UI_Resistance.ui                 # Qt Designer UI definition
+├── gui_mode5_config.json            # Per-model pass/fail limits
+│
+├── setup_services.sh                # Raspberry Pi: install systemd services
+├── hioki-app.service                # Systemd unit — main app
+├── hioki-watchdog.service           # Systemd unit — watchdog
+├── watchdog.sh                      # Watchdog: kills hung process after 30 s in D-state
+└── cmd_service_install_watchdog.txt # Quick manual service install reference
 ```
 
 ## Raspberry Pi 5 Deployment
 
-Install as a systemd service that starts automatically on boot:
+Copy the project to `/home/pi/Hioki_data_logger/` then run the setup script once:
 
 ```bash
-sudo ./setup_pi_autostart.sh
+sudo ./setup_services.sh
 ```
 
-Check service status:
+This installs and enables two systemd services:
+
+| Service | Role |
+|---|---|
+| `hioki-app.service` | Runs `main.py`, auto-restarts on crash |
+| `hioki-watchdog.service` | Kills the app if it enters uninterruptible (D) sleep for 30 s |
+
+Useful commands:
 
 ```bash
-systemctl status hioki-app.service
-journalctl -u hioki-network-status.service -f
+sudo systemctl status  hioki-app.service
+sudo systemctl restart hioki-app.service
+sudo systemctl stop    hioki-app.service
+journalctl -u hioki-app.service -f
+tail -f watchdog.log
 ```
-
-The launcher script [run_hioki_app.sh](run_hioki_app.sh) uses the `.venv` virtualenv if present, otherwise falls back to system Python 3.
 
 ## Data Logging
 
-- **CSV:** A new file `YYYYMMDD.csv` is created each day. Columns: `Timestamp`, `Resistance`, `Status` (OK/NG/N/A), `Model`, `Date`, `Time`, `DB_Status`.
-- **Database:** Uploads happen in a background thread (5 s timeout). Failed uploads are queued to `pending_uploads.json` and retried every 10 seconds. The queue persists across app restarts.
+- **CSV:** A new `YYYYMMDD.csv` file is created each day in the app directory.
+  Columns: `Timestamp`, `Resistance`, `Status` (OK / NG / N/A), `Model`, `Date`, `Time`, `DB_Status`.
+- **Database:** Uploads happen in a background thread (5 s timeout). Failed uploads are queued in `pending_uploads.json` and retried every 10 seconds. The queue persists across app restarts.
 
 ## Connection Resilience
 
-- Port state is verified every 5 seconds.
-- A `*IDN?` health-check query runs every 30 seconds to detect silent failures.
-- Reconnection uses exponential backoff: 1 s → 1.5 s → 2.25 s … up to 60 s.
-
-## Documentation
-
-| File | Contents |
+| Mechanism | Detail |
 |---|---|
-| [README_COMMANDS.md](README_COMMANDS.md) | HIOKI SCPI command reference |
-| [DISCONNECT_FIXES.md](DISCONNECT_FIXES.md) | Connection stability improvements |
-| [GUI_HANG_FIX.md](GUI_HANG_FIX.md) | Thread-safe upload system details |
-| [PENDING_UPLOADS.md](PENDING_UPLOADS.md) | Retry mechanism details |
-| [PI5_AUTOSTART.md](PI5_AUTOSTART.md) | Raspberry Pi 5 autostart setup |
+| Exponential backoff | Reconnect delay: 1 s → 1.5 s → … → 60 s max |
+| `*IDN?` heartbeat | Every 30 s to detect silent device failures |
+| Consecutive timeout limit | 3 timeouts → reconnect |
+| Poll thread crash guard | Unexpected exception emits reconnect signal |
+| Watchdog (Linux) | Kills app process after 30 s in D-state |
+
+## SCPI Command Reference
+
+See [README_COMMANDS.md](README_COMMANDS.md) for the full list of HIOKI SCPI commands.

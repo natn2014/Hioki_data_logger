@@ -9,8 +9,16 @@ set -e  # stop on any error
 # ── Configuration ────────────────────────────────────────────────────────────
 APP_USER="${SUDO_USER:-pi}"                         # the user who ran sudo
 APP_DIR="/home/$APP_USER/Hioki_data_logger"
-PYTHON="$(which python3)"
 SERVICE_DIR="/etc/systemd/system"
+
+# Prefer the virtualenv interpreter so installed packages (PySide2, pyodbc, etc.)
+# are available; fall back to system python3 only if no venv exists.
+VENV_PYTHON="$APP_DIR/.venv/bin/python3"
+if [ -x "$VENV_PYTHON" ]; then
+    PYTHON="$VENV_PYTHON"
+else
+    PYTHON="$(which python3)"
+fi
 # ─────────────────────────────────────────────────────────────────────────────
 
 if [ "$EUID" -ne 0 ]; then
@@ -37,10 +45,9 @@ if [ ! -f "$APP_DIR/main.py" ]; then
     exit 1
 fi
 
-if [ ! -f "$PYTHON" ]; then
-    echo "WARNING: .venv python not found at $PYTHON"
-    echo "         Falling back to system python3"
-    PYTHON=$(which python3)
+if [ -z "$PYTHON" ]; then
+    echo "ERROR: python3 not found. Install it with: sudo apt install python3"
+    exit 1
 fi
 
 # Make scripts executable
@@ -51,7 +58,7 @@ echo ">> Writing $SERVICE_DIR/hioki-app.service"
 cat > "$SERVICE_DIR/hioki-app.service" <<EOF
 [Unit]
 Description=Hioki Data Logger
-After=network.target graphical-session.target
+After=network.target graphical.target
 StartLimitIntervalSec=60
 StartLimitBurst=5
 
@@ -64,6 +71,8 @@ Restart=always
 RestartSec=3
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=/home/$APP_USER/.Xauthority
+Environment=PYTHONUNBUFFERED=1
+Environment=QT_QPA_PLATFORM=xcb
 
 [Install]
 WantedBy=graphical.target
@@ -86,7 +95,7 @@ Restart=always
 RestartSec=3
 
 [Install]
-WantedBy=graphical.target
+WantedBy=multi-user.target
 EOF
 
 # ── Register with systemd ─────────────────────────────────────────────────────

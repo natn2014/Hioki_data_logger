@@ -5,6 +5,15 @@ import pyodbc
 from datetime import datetime
 
 def insert_to_mssql(model, value, status, timeout=5):
+    if not model or not isinstance(model, str):
+        raise ValueError(f"model must be a non-empty string, got: {model!r}")
+    try:
+        float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"value must be numeric, got: {value!r}")
+    if status not in ("OK", "NG", "N/A"):
+        raise ValueError(f"status must be 'OK', 'NG', or 'N/A', got: {status!r}")
+
     server = '172.18.72.16'
     database = 'ENGINEER_DB'
     username = 'engineering_user'

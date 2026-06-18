@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environment
+.venv/
+
+# Runtime-generated data files
+*.csv
+pending_uploads.json
+watchdog.log
+network_status.log
+network_status.txt
+
+# OS
+.DS_Store
+Thumbs.db
