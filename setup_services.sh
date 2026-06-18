@@ -10,15 +10,9 @@ set -e  # stop on any error
 APP_USER="${SUDO_USER:-pi}"                         # the user who ran sudo
 APP_DIR="/home/$APP_USER/Hioki_data_logger"
 SERVICE_DIR="/etc/systemd/system"
-
-# Prefer the virtualenv interpreter so installed packages (PySide2, pyodbc, etc.)
-# are available; fall back to system python3 only if no venv exists.
-VENV_PYTHON="$APP_DIR/.venv/bin/python3"
-if [ -x "$VENV_PYTHON" ]; then
-    PYTHON="$VENV_PYTHON"
-else
-    PYTHON="$(which python3)"
-fi
+VENV_DIR="$APP_DIR/.venv"
+VENV_PYTHON="$VENV_DIR/bin/python3"
+VENV_PIP="$VENV_DIR/bin/pip"
 # ─────────────────────────────────────────────────────────────────────────────
 
 if [ "$EUID" -ne 0 ]; then
@@ -30,7 +24,7 @@ echo ""
 echo "=== Hioki Service Setup ==="
 echo "User      : $APP_USER"
 echo "App dir   : $APP_DIR"
-echo "Python    : $PYTHON"
+echo "Venv      : $VENV_DIR"
 echo ""
 
 # ── Check app directory exists ───────────────────────────────────────────────
@@ -45,10 +39,39 @@ if [ ! -f "$APP_DIR/main.py" ]; then
     exit 1
 fi
 
-if [ -z "$PYTHON" ]; then
+SYS_PYTHON="$(which python3 2>/dev/null || true)"
+if [ -z "$SYS_PYTHON" ]; then
     echo "ERROR: python3 not found. Install it with: sudo apt install python3"
     exit 1
 fi
+
+# ── Create virtual environment if it doesn't exist ───────────────────────────
+if [ ! -d "$VENV_DIR" ]; then
+    echo ">> Creating virtual environment at $VENV_DIR"
+    sudo -u "$APP_USER" "$SYS_PYTHON" -m venv "$VENV_DIR"
+else
+    echo ">> Virtual environment already exists at $VENV_DIR"
+fi
+
+# ── Install / upgrade dependencies ───────────────────────────────────────────
+echo ">> Upgrading pip"
+sudo -u "$APP_USER" "$VENV_PIP" install --upgrade pip --quiet
+
+if [ -f "$APP_DIR/requirements.txt" ]; then
+    echo ">> Installing packages from requirements.txt"
+    sudo -u "$APP_USER" "$VENV_PIP" install -r "$APP_DIR/requirements.txt"
+else
+    echo ">> No requirements.txt found — installing default packages"
+    sudo -u "$APP_USER" "$VENV_PIP" install \
+        PySide2 \
+        pyodbc \
+        pyserial \
+        watchdog \
+        requests
+fi
+echo ">> Python packages installed."
+
+PYTHON="$VENV_PYTHON"
 
 # Make scripts executable
 chmod +x "$APP_DIR/watchdog.sh"
