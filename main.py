@@ -14,12 +14,11 @@ import csv
 import serial
 import serial.tools.list_ports
 from datetime import datetime
-from PySide2.QtCore import QTimer, QThread, Signal, Qt
-from PySide2.QtWidgets import (
+from PySide6.QtCore import QTimer, QThread, Signal, Qt, QStringListModel
+from PySide6.QtWidgets import (
     QApplication, QDialog, QMessageBox, QInputDialog, QAbstractSpinBox
 )
-from PySide2.QtGui import QPalette, QColor
-from PySide2.QtCore import QStringListModel
+from PySide6.QtGui import QPalette, QColor
 from usb_rs import Usb_rs
 from insert_resistance2db import insert_to_mssql
 from ui_UI_Resistance import Ui_Dialog
@@ -30,6 +29,7 @@ POLL_INTERVAL_MS = 500  # default polling interval for FETC?
 CONFIG_FILE = "gui_mode5_config.json"
 MAX_VALID_OHMS = 1e12  # ignore readings above this magnitude
 CSV_HEADERS = ["Timestamp", "Resistance", "Status", "Model", "Date", "Time", "DB_Status"]
+MODEL_CHANGE_LOG = "model_changes.csv"  # persistent record of every model switch
 
 # AIM Code 39 Extended escape sequences (see barcodereader.md)
 AIM_MAP = {
@@ -159,8 +159,8 @@ class MainWindow(QDialog):
         self.upload_signals = UploadSignals()
         # QueuedConnection ensures slots always run on the main thread even when
         # signals are emitted from a plain threading.Thread (not QThread).
-        self.upload_signals.upload_complete.connect(self.on_upload_complete, Qt.QueuedConnection)
-        self.upload_signals.retry_complete.connect(self.on_retry_complete, Qt.QueuedConnection)
+        self.upload_signals.upload_complete.connect(self.on_upload_complete, Qt.ConnectionType.QueuedConnection)
+        self.upload_signals.retry_complete.connect(self.on_retry_complete, Qt.ConnectionType.QueuedConnection)
 
         self.db_manager = DBUploadManager(parent_signals=self.upload_signals)
         self.connected = False
@@ -222,7 +222,7 @@ class MainWindow(QDialog):
 
         # Measurement display is read-only
         self.ui.doubleSpinBox_Measure.setReadOnly(True)
-        self.ui.doubleSpinBox_Measure.setButtonSymbols(QAbstractSpinBox.NoButtons)
+        self.ui.doubleSpinBox_Measure.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
 
         # Logger model for list view
         self.log_model = QStringListModel()
@@ -253,7 +253,8 @@ class MainWindow(QDialog):
         self.det_thread.start()
 
     def load_config(self):
-        """Load model and per-model limits from config.json"""
+        """Load model and per-model limits from config.json, falling back to model_changes.csv."""
+        config_source = "config"
         try:
             if os.path.exists(CONFIG_FILE):
                 with open(CONFIG_FILE, 'r') as f:
@@ -275,6 +276,20 @@ class MainWindow(QDialog):
             self.cleaned_model = ""
             self.lower_limit = 0.0
             self.upper_limit = 1000.0
+
+        # Fall back to model change log when config has no model (crash / missing file)
+        if not self.cleaned_model:
+            recovered = self._recover_model_from_log()
+            if recovered:
+                self.cleaned_model = recovered
+                config_source = "recovery_log"
+                self.log_event(f"Config had no model — recovered '{recovered}' from model_changes.csv")
+                self.log_model_change("RESTORE", "", recovered, "recovery_log")
+                self.load_model_limits()  # pull saved limits for the recovered model
+
+        # Record every startup with the active model for auditability
+        if self.cleaned_model:
+            self.log_model_change("STARTUP", "", self.cleaned_model, config_source)
 
         # Push loaded values into UI
         self.ui.pushButton_model.setText(self.cleaned_model if self.cleaned_model else "Model")
@@ -309,6 +324,36 @@ class MainWindow(QDialog):
                 json.dump(config, f, indent=2)
         except Exception as e:
             print(f"Error saving config: {e}")
+
+    def log_model_change(self, action, old_model, new_model, source):
+        """Append a model event to model_changes.csv for audit and crash recovery."""
+        try:
+            log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), MODEL_CHANGE_LOG)
+            file_exists = os.path.exists(log_path)
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with open(log_path, "a", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                if not file_exists:
+                    writer.writerow(["Timestamp", "Action", "Previous_Model", "New_Model", "Source"])
+                writer.writerow([timestamp, action, old_model, new_model, source])
+        except Exception as e:
+            print(f"Model change log write error: {e}")
+
+    def _recover_model_from_log(self):
+        """Return the last New_Model from model_changes.csv, or '' if unavailable."""
+        try:
+            log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), MODEL_CHANGE_LOG)
+            if not os.path.exists(log_path):
+                return ""
+            last_model = ""
+            with open(log_path, "r", encoding="utf-8") as f:
+                for row in csv.DictReader(f):
+                    if row.get("New_Model"):
+                        last_model = row["New_Model"]
+            return last_model
+        except Exception as e:
+            print(f"Model recovery log read error: {e}")
+            return ""
 
     def on_limit_changed(self):
         """Update limits when spinbox values change"""
@@ -372,11 +417,13 @@ class MainWindow(QDialog):
         """Prompt user for model, clean it, show on button, and load its limits."""
         text, ok = QInputDialog.getText(self, "Model", "Enter model text:", text=self.cleaned_model)
         if ok:
+            old_model = self.cleaned_model
             cleaned = self.clean_raw_text(text)
             self.cleaned_model = cleaned
             self.ui.pushButton_model.setText(cleaned if cleaned else "Model")
             self.load_model_limits()
             self.save_config()
+            self.log_model_change("CHANGE", old_model, cleaned, "manual")
 
     def load_model_limits(self):
         """Load and apply limits for the current model from config."""
@@ -408,7 +455,7 @@ class MainWindow(QDialog):
         """
         key = event.key()
         text = event.text()
-        if key in (Qt.Key_Return, Qt.Key_Enter):
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             if self._barcode_buffer:
                 self._barcode_timer.stop()
                 self._handle_barcode_input()
@@ -437,10 +484,12 @@ class MainWindow(QDialog):
             self.append_log(f"Barcode: unrecognised format — {raw}")
             return
         self.log_event(f"Barcode scan: '{raw}' → '{decoded}'")
+        old_model = self.cleaned_model
         self.cleaned_model = decoded
         self.ui.pushButton_model.setText(decoded)
         self.load_model_limits()
         self.save_config()
+        self.log_model_change("CHANGE", old_model, decoded, "barcode")
         self.append_log(f"Model set via barcode: {decoded}")
 
     def compare_spec(self, value_str):
@@ -604,6 +653,7 @@ class MainWindow(QDialog):
                 text, ok = QInputDialog.getText(self, "Model", "Enter model text:")
                 if ok:
                     cleaned_model = self.clean_raw_text(text).strip()
+                    self.log_model_change("CHANGE", "", cleaned_model, "prompt")
                     self.cleaned_model = cleaned_model
                     self.ui.pushButton_model.setText(cleaned_model if cleaned_model else "Model")
                     print(f"DEBUG: Model set via prompt: '{cleaned_model}'")
@@ -780,7 +830,7 @@ class MainWindow(QDialog):
         label = self.ui.label_ConnectionStatus
         label.setText(f"Status: {text}")
         palette = label.palette()
-        palette.setColor(QPalette.WindowText, QColor(color_map.get(color, 'black')))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor(color_map.get(color, 'black')))
         label.setPalette(palette)
         label.setStyleSheet("font-weight: bold;")
 
@@ -822,7 +872,7 @@ def main():
     except Exception as e:
         QMessageBox.critical(None, "Startup Error", f"Failed to initialize application:\n{e}")
         sys.exit(1)
-    sys.exit(app.exec_())
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":

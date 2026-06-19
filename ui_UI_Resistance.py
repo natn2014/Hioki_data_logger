@@ -8,12 +8,12 @@
 ## WARNING! All changes made in this file will be lost when recompiling UI file!
 ################################################################################
 
-from PySide2.QtCore import (QCoreApplication, QMetaObject, QObject, QPoint,
+from PySide6.QtCore import (QCoreApplication, QMetaObject, QObject, QPoint,
     QRect, QSize, QUrl, Qt)
-from PySide2.QtGui import (QBrush, QColor, QConicalGradient, QCursor, QFont,
+from PySide6.QtGui import (QBrush, QColor, QConicalGradient, QCursor, QFont,
     QFontDatabase, QIcon, QLinearGradient, QPalette, QPainter, QPixmap,
     QRadialGradient)
-from PySide2.QtWidgets import (QAbstractSpinBox, QDoubleSpinBox, QFrame,
+from PySide6.QtWidgets import (QAbstractSpinBox, QDoubleSpinBox, QFrame,
     QGroupBox, QHBoxLayout, QLabel, QListView, QPushButton, QSizePolicy,
     QVBoxLayout)
 
@@ -23,7 +23,7 @@ class Ui_Dialog(object):
         if Dialog.objectName():
             Dialog.setObjectName(u"Dialog")
         Dialog.resize(1280, 800)
-        sizePolicy = QSizePolicy(QSizePolicy.Maximum, QSizePolicy.Maximum)
+        sizePolicy = QSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Maximum)
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(0)
         sizePolicy.setHeightForWidth(Dialog.sizePolicy().hasHeightForWidth())
@@ -78,7 +78,7 @@ class Ui_Dialog(object):
         font5.setBold(True)
         font5.setWeight(75)
         self.doubleSpinBox_Measure.setFont(font5)
-        self.doubleSpinBox_Measure.setAlignment(Qt.AlignCenter)
+        self.doubleSpinBox_Measure.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.doubleSpinBox_Measure.setDecimals(3)
         self.verticalLayout_4.addWidget(self.doubleSpinBox_Measure)
         self.horizontalLayout.addWidget(self.groupBox_MeasureValue, 3)  # stretch=3
@@ -86,8 +86,8 @@ class Ui_Dialog(object):
         # ── Vertical divider ──────────────────────────────────────────────────
         self.line = QFrame(self.groupBox_Resistance)
         self.line.setObjectName(u"line")
-        self.line.setFrameShape(QFrame.VLine)
-        self.line.setFrameShadow(QFrame.Sunken)
+        self.line.setFrameShape(QFrame.Shape.VLine)
+        self.line.setFrameShadow(QFrame.Shadow.Sunken)
         self.horizontalLayout.addWidget(self.line)
 
         # ── Right: Upper Limit (top) + Lower Limit (bottom) ───────────────────
@@ -106,8 +106,8 @@ class Ui_Dialog(object):
         self.doubleSpinBox_UpperLimit = QDoubleSpinBox(self.groupBox_UpperLimit)
         self.doubleSpinBox_UpperLimit.setObjectName(u"doubleSpinBox_UpperLimit")
         self.doubleSpinBox_UpperLimit.setFont(font_limit_spin)
-        self.doubleSpinBox_UpperLimit.setAlignment(Qt.AlignCenter)
-        self.doubleSpinBox_UpperLimit.setButtonSymbols(QAbstractSpinBox.PlusMinus)
+        self.doubleSpinBox_UpperLimit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.doubleSpinBox_UpperLimit.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.PlusMinus)
         self.doubleSpinBox_UpperLimit.setDecimals(3)
         self.verticalLayout_5.addWidget(self.doubleSpinBox_UpperLimit)
         self.right_limits_layout.addWidget(self.groupBox_UpperLimit)
@@ -120,8 +120,8 @@ class Ui_Dialog(object):
         self.doubleSpinBox_lowerLimit = QDoubleSpinBox(self.groupBox_LowerLimit)
         self.doubleSpinBox_lowerLimit.setObjectName(u"doubleSpinBox_lowerLimit")
         self.doubleSpinBox_lowerLimit.setFont(font_limit_spin)
-        self.doubleSpinBox_lowerLimit.setAlignment(Qt.AlignCenter)
-        self.doubleSpinBox_lowerLimit.setButtonSymbols(QAbstractSpinBox.PlusMinus)
+        self.doubleSpinBox_lowerLimit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.doubleSpinBox_lowerLimit.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.PlusMinus)
         self.doubleSpinBox_lowerLimit.setDecimals(3)
         self.verticalLayout_3.addWidget(self.doubleSpinBox_lowerLimit)
         self.right_limits_layout.addWidget(self.groupBox_LowerLimit)

@@ -6,7 +6,7 @@ import os
 import time
 from datetime import datetime
 from threading import Thread, Lock
-from PySide2.QtCore import Signal, QObject
+from PySide6.QtCore import Signal, QObject
 from insert_resistance2db import insert_to_mssql
 
 
