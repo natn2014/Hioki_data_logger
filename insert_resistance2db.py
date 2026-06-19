@@ -20,13 +20,15 @@ def insert_to_mssql(model, value, status, timeout=5):
     password = 'Engineering@user'
     driver = '{ODBC Driver 18 for SQL Server}'
 
-    # Connect Timeout: TCP handshake + login timeout.
-    # CommandTimeout: per-query deadline enforced by ODBC Driver 18.
-    # Both are set so either enforcement path fires first.
+    # Connect Timeout covers TCP handshake + ODBC login negotiation.
+    # On factory LANs this can take longer than the caller's `timeout` arg,
+    # so we give the login phase its own headroom (at least 15 s).
+    connect_timeout = max(timeout, 15)
     conn_str = (f'DRIVER={driver};SERVER={server};DATABASE={database};'
                 f'UID={username};PWD={password};'
-                f'Connect Timeout={timeout};CommandTimeout={timeout};'
-                f'TrustServerCertificate=yes')
+                f'Connect Timeout={connect_timeout};CommandTimeout={timeout};'
+                f'TrustServerCertificate=yes;'
+                f'Encrypt=yes')
 
     result = {'conn': None, 'error': None}
 
