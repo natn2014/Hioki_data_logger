@@ -42,7 +42,7 @@ def insert_to_mssql(model, value, status, timeout=5):
     # deadline on Linux/ARM where the OS TCP timeout can exceed the pyodbc one.
     t = threading.Thread(target=_connect, daemon=True)
     t.start()
-    t.join(timeout=timeout + 2)     # give pyodbc's own timeout a chance first
+    t.join(timeout=connect_timeout + 2)  # give pyodbc's own timeout a chance first
 
     if t.is_alive():
         raise RuntimeError(f"Database connection timed out after {timeout}s")
