@@ -1,5 +1,5 @@
 PySide6
 pyodbc
-pyserial
+pyserial        # provides serial.tools.list_ports  (NOT the 'serial' package)
 watchdog
 requests
