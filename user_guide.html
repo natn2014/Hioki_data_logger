@@ -225,6 +225,19 @@
       margin-right: 4px;
     }
 
+    /* ── Keyboard shortcut ── */
+    kbd {
+      display: inline-block;
+      background: #f0f0f0;
+      border: 1px solid #bbb;
+      border-radius: 4px;
+      padding: 1px 7px;
+      font-family: 'Consolas', monospace;
+      font-size: 0.88em;
+      color: #212121;
+      box-shadow: 0 1px 0 #aaa;
+    }
+
     /* ── TOC ── */
     .toc {
       background: #E3F2FD;
@@ -266,12 +279,14 @@
       <li><a href="#requirements">Requirements</a></li>
       <li><a href="#startup">Starting the App</a></li>
       <li><a href="#ui">Reading the Screen</a></li>
+      <li><a href="#audio">Audio Feedback &amp; Keyboard Shortcuts</a></li>
       <li><a href="#model">Setting the Product Model</a></li>
       <li><a href="#limits">Configuring Pass / Fail Limits</a></li>
       <li><a href="#results">Understanding Measurement Results</a></li>
       <li><a href="#data">Where Data is Saved</a></li>
       <li><a href="#db">Database Upload Status</a></li>
       <li><a href="#reconnect">Connection Loss &amp; Reconnection</a></li>
+      <li><a href="#rpi">Raspberry Pi Deployment</a></li>
       <li><a href="#troubleshoot">Troubleshooting</a></li>
     </ol>
   </div>
@@ -281,19 +296,21 @@
     <h2>1 &nbsp; What This App Does</h2>
     <div class="card">
       <p>
-        The HIOKI Data Logger connects to a HIOKI resistance meter (RM3544, RM3545, DM7276, etc.)
-        through a USB or RS-232 serial cable and continuously reads resistance measurements.
-        Every stable reading is:
+        The HIOKI Data Logger connects to a HIOKI resistance meter (RM3544-01, RM3545, RM3542,
+        DM7276, DM7275, IM7580A, etc.) through a USB or RS-232 serial cable and continuously
+        reads resistance measurements. Every stable reading is:
       </p>
       <ul style="margin: 10px 0 0 20px;">
         <li>Displayed live on-screen</li>
         <li>Compared against your configured upper / lower limits (PASS or FAIL)</li>
+        <li>Accompanied by a Thai-language audio alert</li>
         <li>Saved to a daily CSV file on this PC</li>
         <li>Uploaded to the factory SQL Server database automatically</li>
       </ul>
       <p style="margin-top:10px;">
         No manual intervention is required &mdash; the app auto-detects the meter,
         auto-reconnects after cable problems, and queues failed uploads for retry.
+        It can also be deployed as a systemd service on Raspberry Pi for always-on operation.
       </p>
     </div>
   </section>
@@ -314,9 +331,11 @@
     <table>
       <tr><th>Package</th><th>Purpose</th></tr>
       <tr><td>Python 3.9+</td><td>Runtime</td></tr>
-      <tr><td>PySide6</td><td>GUI framework</td></tr>
+      <tr><td>PySide6</td><td>GUI framework and audio playback (QtMultimedia)</td></tr>
       <tr><td>pyserial</td><td>Serial port communication</td></tr>
       <tr><td>pyodbc + ODBC Driver 18</td><td>SQL Server connection</td></tr>
+      <tr><td>watchdog</td><td>File system event monitoring</td></tr>
+      <tr><td>requests</td><td>HTTP utilities</td></tr>
     </table>
 
     <div class="tip">
@@ -348,38 +367,51 @@
     <h2>4 &nbsp; Reading the Screen</h2>
 
     <div class="ui-mock">
-      <div class="title-bar">HIOKI Auto Hold Mode (Mode 5)</div>
+      <div class="title-bar">HIOKI Data Logger — Auto Hold Mode</div>
 
-      <div class="ui-row">
-        <div>
-          <div class="ui-label">Model</div>
-          <div class="ui-box ui-btn">SRG14R-MM-4FHX</div>
+      <!-- Row 1: Status bar — USB+WiFi cards (left) + Model button (right) -->
+      <div style="display:flex; gap:8px; margin-bottom:10px; align-items:stretch;">
+        <div style="display:flex; flex-direction:column; gap:4px; min-width:180px;">
+          <div class="ui-box" style="text-align:left; padding:5px 10px; color:#4CAF50;">
+            &#9679; USB &nbsp; Connected
+          </div>
+          <div class="ui-box" style="text-align:left; padding:5px 10px; color:#4CAF50;">
+            WiFi ▂▄▆█ 85%
+          </div>
         </div>
-        <div>
-          <div class="ui-label">Measurement (Ω)</div>
-          <div class="ui-box big">10.452</div>
-        </div>
-        <div>
-          <div class="ui-label">Judgement</div>
-          <div class="ui-box pass">PASS</div>
+        <div class="ui-btn" style="flex:1; font-size:1.4rem; font-weight:700; padding:14px 20px; display:flex; align-items:center; justify-content:center; border-radius:4px;">
+          SRG14R-MM-4FHX
         </div>
       </div>
 
-      <div class="ui-row">
-        <div>
-          <div class="ui-label">Lower Limit</div>
-          <div class="ui-box">8.000</div>
+      <!-- Row 2: Resistance — Measured (wide, stretch=3) | divider | Upper+Lower limits (narrow, stretch=1) -->
+      <div style="display:flex; gap:0; margin-bottom:10px; align-items:stretch;">
+        <div style="flex:3; padding-right:10px;">
+          <div class="ui-label" style="margin-bottom:4px;">Measured</div>
+          <div class="ui-box" style="font-size:3rem; font-weight:700; color:#80CBC4; padding:10px; width:100%;">
+            10.452 <span style="font-size:1.2rem; color:#90A4AE;">&Omega;</span>
+          </div>
         </div>
-        <div>
-          <div class="ui-label">Upper Limit</div>
-          <div class="ui-box">14.000</div>
-        </div>
-        <div>
-          <div class="ui-label">Connection Status</div>
-          <div class="ui-box" style="color:#A5D6A7;">&#9679; Connected on COM3 (polling)</div>
+        <div style="width:1px; background:#455A64; margin:0 8px;"></div>
+        <div style="flex:1; display:flex; flex-direction:column; gap:8px; padding-left:10px;">
+          <div>
+            <div class="ui-label" style="margin-bottom:4px;">Upper Limit</div>
+            <div class="ui-box" style="font-size:1.4rem; font-weight:600; color:#ECEFF1;">14.000 &plusmn;</div>
+          </div>
+          <div>
+            <div class="ui-label" style="margin-bottom:4px;">Lower Limit</div>
+            <div class="ui-box" style="font-size:1.4rem; font-weight:600; color:#ECEFF1;">8.000 &plusmn;</div>
+          </div>
         </div>
       </div>
 
+      <!-- Row 3: Judgement — full-width button -->
+      <div class="ui-box pass" style="width:100%; font-size:2.4rem; font-weight:700; padding:16px; text-align:center; margin-bottom:10px;">
+        PASS
+      </div>
+
+      <!-- Row 4: Data Log -->
+      <div class="ui-label" style="margin-bottom:4px;">Data Log</div>
       <div class="ui-log">
         <div class="inf">12:01:05.441  Auto Hold enabled. Polling FETC?...</div>
         <div class="ok" >12:01:06.023  10.452  PASS  (CSV: ✓)  (DB: Uploading...)</div>
@@ -392,43 +424,94 @@
     <table style="margin-top:16px;">
       <tr><th>Element</th><th>Description</th></tr>
       <tr>
-        <td><strong>Model button</strong></td>
-        <td>Shows the current product model. Click to change it manually.</td>
-      </tr>
-      <tr>
-        <td><strong>Measurement display</strong></td>
-        <td>Live resistance reading from the meter in ohms (Ω). Updates every ~500 ms.</td>
-      </tr>
-      <tr>
-        <td><strong>Judgement</strong></td>
+        <td><strong>USB status card</strong></td>
         <td>
+          Shows the HIOKI meter serial connection state.<br/>
+          <span class="badge badge-green">&#9679;</span> <code>USB &nbsp; Connected</code> — device found, polling active<br/>
+          <span class="badge badge-orange">&#9675;</span> <code>USB &nbsp; Connecting</code> — scanning ports / reconnecting<br/>
+          <span class="badge badge-red">&#9675;</span> <code>USB &nbsp; Disconnected</code> — no device found
+        </td>
+      </tr>
+      <tr>
+        <td><strong>WiFi card</strong></td>
+        <td>Shows Wi-Fi signal as bar characters (<code>▂▄▆█</code>) and percentage, e.g. <code>WiFi ▂▄▆█ 85%</code>. Color is green ≥ 70 %, orange ≥ 40 %, red &lt; 40 %. Displays <code>WiFi &nbsp; ---</code> (gray) when no wireless interface is available.</td>
+      </tr>
+      <tr>
+        <td><strong>Model button</strong></td>
+        <td>Large button showing the active product model. Click to change it manually.</td>
+      </tr>
+      <tr>
+        <td><strong>Measured</strong></td>
+        <td>Live resistance reading from the meter in ohms (Ω). Updates every ~500 ms. This is the dominant display element.</td>
+      </tr>
+      <tr>
+        <td><strong>Upper Limit</strong></td>
+        <td>Editable spin-box (± buttons). Upper boundary for PASS judgement.</td>
+      </tr>
+      <tr>
+        <td><strong>Lower Limit</strong></td>
+        <td>Editable spin-box (± buttons). Lower boundary for PASS judgement.</td>
+      </tr>
+      <tr>
+        <td><strong>Judgement button</strong></td>
+        <td>
+          Full-width button showing the latest verdict:<br/>
           <span class="badge badge-green">PASS</span> reading is within limits &nbsp;
           <span class="badge badge-red">FAIL</span> reading is outside limits &nbsp;
-          <span class="badge badge-gray">N/A</span> cannot be compared
+          <span class="badge badge-gray">N/A</span> non-numeric reading
         </td>
       </tr>
       <tr>
-        <td><strong>Lower / Upper Limit</strong></td>
-        <td>Editable spin-boxes. Set your acceptable resistance range here.</td>
-      </tr>
-      <tr>
-        <td><strong>Connection Status</strong></td>
-        <td>
-          <span class="badge badge-green">green</span> connected and polling &nbsp;
-          <span class="badge badge-orange">orange</span> searching / reconnecting &nbsp;
-          <span class="badge badge-red">red</span> not connected
-        </td>
-      </tr>
-      <tr>
-        <td><strong>Log list</strong></td>
-        <td>Every stable reading with timestamp, value, PASS/FAIL, CSV status, and DB upload status.</td>
+        <td><strong>Data Log</strong></td>
+        <td>Every stable reading with timestamp, resistance value, detailed verdict (<code>PASS</code> / <code>FAIL: Low</code> / <code>FAIL: High</code> / <code>N/A</code>), CSV write status, and DB upload status. Shows the last 500 entries.</td>
       </tr>
     </table>
   </section>
 
-  <!-- 5. Model -->
+  <!-- 5. Audio Feedback -->
+  <section id="audio">
+    <h2>5 &nbsp; Audio Feedback &amp; Keyboard Shortcuts</h2>
+
+    <div class="card">
+      <h3>Thai-language voice alerts</h3>
+      <p>
+        Every time a stable reading is recorded, the app plays an audio alert in Thai:
+      </p>
+      <table>
+        <tr><th>Result</th><th>Audio file played</th></tr>
+        <tr><td><span class="badge badge-green">PASS</span></td><td><code>ResistancePass_TH.mp3</code></td></tr>
+        <tr><td><span class="badge badge-red">FAIL</span></td><td><code>ResistanceOver_TH.mp3</code></td></tr>
+      </table>
+      <p style="margin-top:10px;">
+        Audio playback uses <strong>QtMultimedia (QMediaPlayer)</strong>.
+        On Raspberry Pi / Linux, GStreamer must be installed for MP3 decoding — see
+        <a href="#rpi">Section 12: Raspberry Pi Deployment</a>.
+      </p>
+    </div>
+
+    <div class="card">
+      <h3>Keyboard shortcuts for testing audio</h3>
+      <p>
+        Use these shortcuts to verify the PASS/FAIL sounds without a connected HIOKI meter.
+        Both work at any time while the application is running.
+      </p>
+      <table>
+        <tr><th>Shortcut</th><th>Effect</th></tr>
+        <tr>
+          <td><kbd>Ctrl</kbd> + <kbd>P</kbd></td>
+          <td>Simulate PASS &mdash; green judgement button + plays <code>ResistancePass_TH.mp3</code></td>
+        </tr>
+        <tr>
+          <td><kbd>Ctrl</kbd> + <kbd>F</kbd></td>
+          <td>Simulate FAIL &mdash; red judgement button + plays <code>ResistanceOver_TH.mp3</code></td>
+        </tr>
+      </table>
+    </div>
+  </section>
+
+  <!-- 6. Model -->
   <section id="model">
-    <h2>5 &nbsp; Setting the Product Model</h2>
+    <h2>6 &nbsp; Setting the Product Model</h2>
     <p>The app tags every measurement with a product model name before saving it. There are three ways to set the model:</p>
 
     <div class="card">
@@ -440,7 +523,7 @@
       <div class="tip">
         <strong>Format:</strong> The scanner must output <strong>Code 39 Extended</strong> with AIM <code>/X</code>
         escape sequences. The app strips the leading check digit and converts escape codes automatically.<br/>
-        Example: <code>?H60AGV/HFCWR/I-MM-4FHX-B5/D...</code> → <code>H60AGV(FCWR)-MM-4FHX-B5</code>
+        Example: <code>?H60AGV/HFCWR/I-MM-4FHX-B5/D...</code> &rarr; <code>H60AGV(FCWR)-MM-4FHX-B5</code>
       </div>
     </div>
 
@@ -453,7 +536,7 @@
       </ol>
       <p style="margin-top:8px;">
         If you paste a raw barcode string containing <code>$</code> separators
-        (e.g. <code>FOD11850100163$SRG14R-MM-4FHX$15</code>) the app automatically
+        (e.g. <code>FOD123$1SRG14R(BRK)-MM$15</code>) the app automatically
         extracts the text between the first and second <code>$</code>.
       </p>
     </div>
@@ -466,6 +549,41 @@
       </p>
     </div>
 
+    <h3>Barcode Decode Priority</h3>
+    <p>
+      All three model-entry paths (scanner, Model button, auto-prompt) run through the
+      same unified decode function in the priority order below:
+    </p>
+    <table>
+      <tr><th>Priority</th><th>Format</th><th>Detection</th><th>Example input</th><th>Result</th></tr>
+      <tr>
+        <td>1</td>
+        <td><strong>Dollar-delimited</strong></td>
+        <td>Contains <code>$</code></td>
+        <td><code>FOD123$1SRG14R(BRK)-MM$15</code></td>
+        <td><code>SRG14R(BRK)-MM</code></td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td><strong>AIM Code 39 Extended</strong></td>
+        <td>Contains <code>/[A-Z]</code> escape pair</td>
+        <td><code>?H60AGV/HFCWR/I-MM-4FHX-B5/D...</code></td>
+        <td><code>H60AGV(FCWR)-MM-4FHX-B5</code></td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td><strong>Plain text</strong></td>
+        <td>No <code>$</code> or <code>/X</code> patterns</td>
+        <td><code>SRG14R-MM-4FHX-B5</code></td>
+        <td><code>SRG14R-MM-4FHX-B5</code></td>
+      </tr>
+    </table>
+    <p style="margin-top:8px; font-size:0.9rem; color:#555;">
+      <strong>AIM Code 39 Extended details:</strong> strips the leading check-digit character,
+      converts <code>/H</code>&rarr;<code>(</code>, <code>/I</code>&rarr;<code>)</code>,
+      <code>/L</code>&rarr;<code>/</code>, etc., and stops at <code>/D</code> (field separator).
+    </p>
+
     <div class="tip">
       <strong>Persistence:</strong> The last used model is saved to <code>gui_mode5_config.json</code>
       and restored automatically on the next startup. If that file is missing, the app recovers the model
@@ -473,9 +591,9 @@
     </div>
   </section>
 
-  <!-- 6. Limits -->
+  <!-- 7. Limits -->
   <section id="limits">
-    <h2>6 &nbsp; Configuring Pass / Fail Limits</h2>
+    <h2>7 &nbsp; Configuring Pass / Fail Limits</h2>
 
     <ol class="steps">
       <li>
@@ -505,9 +623,9 @@
     </div>
   </section>
 
-  <!-- 7. Results -->
+  <!-- 8. Results -->
   <section id="results">
-    <h2>7 &nbsp; Understanding Measurement Results</h2>
+    <h2>8 &nbsp; Understanding Measurement Results</h2>
 
     <div class="card">
       <h3>Stability detection</h3>
@@ -528,19 +646,19 @@
         <tr><td><code>10.452</code></td><td>Resistance value in ohms</td></tr>
         <tr><td><code>PASS / FAIL: Low / FAIL: High</code></td><td>Limit comparison result</td></tr>
         <tr><td><code>(CSV: ✓)</code></td><td>Written to daily CSV file successfully</td></tr>
-        <tr><td><code>(DB: Uploading...)</code></td><td>Sent to SQL Server (see Section 9)</td></tr>
+        <tr><td><code>(DB: Uploading...)</code></td><td>Sent to SQL Server (see Section 10)</td></tr>
       </table>
     </div>
   </section>
 
-  <!-- 8. Data -->
+  <!-- 9. Data -->
   <section id="data">
-    <h2>8 &nbsp; Where Data is Saved</h2>
+    <h2>9 &nbsp; Where Data is Saved</h2>
 
     <table>
       <tr><th>File</th><th>Contents</th><th>Created by</th></tr>
       <tr>
-        <td><code>YYYYMMDD.csv</code><br/>(e.g. <code>20260619.csv</code>)</td>
+        <td><code>YYYYMMDD.csv</code><br/>(e.g. <code>20260624.csv</code>)</td>
         <td>Every stable reading: Timestamp, Resistance, Status (OK/NG/N/A), Model, Date, Time, DB_Status</td>
         <td>Automatically, one new file per calendar day</td>
       </tr>
@@ -561,6 +679,14 @@
       </tr>
     </table>
 
+    <h3>Model Change Actions</h3>
+    <table>
+      <tr><th>Action</th><th>Meaning</th></tr>
+      <tr><td><code>STARTUP</code></td><td>App started with this model (from config or recovery)</td></tr>
+      <tr><td><code>CHANGE</code></td><td>Model switched — source is <code>barcode</code>, <code>manual</code>, or <code>prompt</code></td></tr>
+      <tr><td><code>RESTORE</code></td><td>Model recovered from <code>model_changes.csv</code> after config was missing</td></tr>
+    </table>
+
     <div class="tip">
       <strong>No data is lost</strong> when the database is offline. All readings are written to the
       daily CSV first; failed DB uploads are queued and retried automatically when the server
@@ -568,9 +694,9 @@
     </div>
   </section>
 
-  <!-- 9. DB -->
+  <!-- 10. DB -->
   <section id="db">
-    <h2>9 &nbsp; Database Upload Status</h2>
+    <h2>10 &nbsp; Database Upload Status</h2>
     <p>Every stable reading is uploaded to the factory SQL Server. The log line shows the current upload state:</p>
 
     <table>
@@ -593,9 +719,9 @@
 )</pre>
   </section>
 
-  <!-- 10. Reconnect -->
+  <!-- 11. Reconnect -->
   <section id="reconnect">
-    <h2>10 &nbsp; Connection Loss &amp; Reconnection</h2>
+    <h2>11 &nbsp; Connection Loss &amp; Reconnection</h2>
     <p>The app handles cable disconnections and serial errors automatically:</p>
 
     <div class="card">
@@ -617,6 +743,10 @@
           <td>Poll thread crash guard</td>
           <td>Any unexpected serial error causes a clean reconnect rather than a crash</td>
         </tr>
+        <tr>
+          <td>Watchdog (Linux)</td>
+          <td>Kills the app process after 30 s in uninterruptible (D) sleep state</td>
+        </tr>
       </table>
     </div>
 
@@ -626,9 +756,64 @@
     </p>
   </section>
 
-  <!-- 11. Troubleshoot -->
+  <!-- 12. Raspberry Pi Deployment -->
+  <section id="rpi">
+    <h2>12 &nbsp; Raspberry Pi Deployment</h2>
+    <p>
+      The app runs as a pair of <strong>systemd services</strong> on Raspberry Pi for always-on,
+      auto-start operation.
+    </p>
+
+    <h3>Initial setup</h3>
+    <ol class="steps">
+      <li>Copy the project to <code>/home/pi/Hioki_data_logger/</code>.</li>
+      <li>
+        Make the setup script executable and run it once as root:
+        <pre>chmod +x setup_services.sh
+sudo ./setup_services.sh</pre>
+      </li>
+    </ol>
+
+    <p>The setup script automatically:</p>
+    <ul style="margin: 8px 0 12px 20px;">
+      <li>Installs system packages via <code>apt</code> (serial, ODBC libs, XCB cursor, GStreamer for MP3 audio)</li>
+      <li>Creates a <code>.venv</code> virtual environment with <code>--system-site-packages</code></li>
+      <li>Installs all Python packages from <code>requirements.txt</code></li>
+      <li>Verifies every module imports without error — exits with a clear failure message if any import fails</li>
+      <li>Writes and enables two systemd services</li>
+      <li>Starts both services and shows their status</li>
+    </ul>
+
+    <div class="warn">
+      <strong>GStreamer required for audio:</strong> MP3 playback via QMediaPlayer needs GStreamer on Linux.
+      The setup script installs the required packages (<code>gstreamer1.0-plugins-good</code>,
+      <code>gstreamer1.0-alsa</code>, <code>gstreamer1.0-libav</code>, etc.) automatically.
+    </div>
+
+    <h3>Services</h3>
+    <table>
+      <tr><th>Service</th><th>Role</th></tr>
+      <tr>
+        <td><code>hioki-app.service</code></td>
+        <td>Runs <code>main.py</code>, waits for X11 display, auto-restarts on crash</td>
+      </tr>
+      <tr>
+        <td><code>hioki-watchdog.service</code></td>
+        <td>Kills the app if it enters uninterruptible (D) sleep for 30 s</td>
+      </tr>
+    </table>
+
+    <h3>Useful commands</h3>
+    <pre>sudo systemctl status  hioki-app.service
+sudo systemctl restart hioki-app.service
+sudo systemctl stop    hioki-app.service
+journalctl -u hioki-app.service -f
+tail -f /home/pi/Hioki_data_logger/watchdog.log</pre>
+  </section>
+
+  <!-- 13. Troubleshoot -->
   <section id="troubleshoot">
-    <h2>11 &nbsp; Troubleshooting</h2>
+    <h2>13 &nbsp; Troubleshooting</h2>
 
     <div class="card">
       <h3>Status stays red — "No HIOKI device found"</h3>
@@ -677,6 +862,16 @@
     </div>
 
     <div class="card">
+      <h3>No audio on PASS / FAIL</h3>
+      <ol class="steps">
+        <li>Confirm <code>ResistancePass_TH.mp3</code> and <code>ResistanceOver_TH.mp3</code> are in the app directory.</li>
+        <li>Check system volume is not muted.</li>
+        <li>On Raspberry Pi / Linux, ensure GStreamer is installed — run <code>sudo ./setup_services.sh</code> to install it.</li>
+        <li>Use <kbd>Ctrl</kbd>+<kbd>P</kbd> or <kbd>Ctrl</kbd>+<kbd>F</kbd> to test audio without a connected meter.</li>
+      </ol>
+    </div>
+
+    <div class="card">
       <h3>App does not start / Python error on launch</h3>
       <ol class="steps">
         <li>Confirm all packages are installed: <code>pip install -r requirements.txt</code></li>
@@ -697,7 +892,7 @@
 </div><!-- /container -->
 
 <footer>
-  HIOKI Data Logger &mdash; User Guide &nbsp;|&nbsp; Generated 2026-06-19
+  HIOKI Data Logger &mdash; User Guide &nbsp;|&nbsp; Updated 2026-06-24
 </footer>
 
 </body>
