@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HIOKI Data Logger — User Guide</title>
+  <style>
+    :root {
+      --green:  #4CAF50;
+      --red:    #f44336;
+      --orange: #FF9800;
+      --blue:   #1976D2;
+      --gray:   #616161;
+      --bg:     #f5f5f5;
+      --card:   #ffffff;
+      --border: #e0e0e0;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      background: var(--bg);
+      color: #212121;
+      line-height: 1.6;
+    }
+
+    /* ── Header ── */
+    header {
+      background: linear-gradient(135deg, #1565C0 0%, #0D47A1 100%);
+      color: #fff;
+      padding: 36px 40px 28px;
+    }
+    header h1 { font-size: 2rem; font-weight: 700; letter-spacing: 0.5px; }
+    header p  { margin-top: 6px; font-size: 1rem; opacity: 0.85; }
+
+    /* ── Layout ── */
+    .container { max-width: 960px; margin: 0 auto; padding: 32px 20px 60px; }
+
+    /* ── Section ── */
+    section { margin-bottom: 40px; }
+    h2 {
+      font-size: 1.35rem;
+      font-weight: 700;
+      color: #0D47A1;
+      border-left: 5px solid var(--blue);
+      padding-left: 12px;
+      margin-bottom: 16px;
+    }
+    h3 {
+      font-size: 1.05rem;
+      font-weight: 600;
+      color: #333;
+      margin: 18px 0 8px;
+    }
+    p { margin-bottom: 10px; }
+
+    /* ── Card ── */
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px 24px;
+      margin-bottom: 16px;
+    }
+
+    /* ── Steps ── */
+    .steps { counter-reset: step; list-style: none; padding: 0; }
+    .steps li {
+      counter-increment: step;
+      position: relative;
+      padding: 12px 16px 12px 52px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 10px;
+    }
+    .steps li::before {
+      content: counter(step);
+      position: absolute;
+      left: 14px; top: 50%; transform: translateY(-50%);
+      width: 28px; height: 28px;
+      background: var(--blue);
+      color: #fff;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 700; font-size: 0.85rem;
+    }
+
+    /* ── Status badges ── */
+    .badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-weight: 700;
+      font-size: 0.82rem;
+      color: #fff;
+    }
+    .badge-green  { background: var(--green);  }
+    .badge-red    { background: var(--red);    }
+    .badge-orange { background: var(--orange); }
+    .badge-gray   { background: var(--gray);   }
+
+    /* ── Table ── */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.93rem;
+      margin: 10px 0;
+    }
+    th {
+      background: #E3F2FD;
+      color: #0D47A1;
+      text-align: left;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      font-weight: 700;
+    }
+    td {
+      padding: 9px 12px;
+      border: 1px solid var(--border);
+      vertical-align: top;
+    }
+    tr:nth-child(even) td { background: #fafafa; }
+
+    /* ── Tip / Warning boxes ── */
+    .tip, .warn {
+      border-radius: 6px;
+      padding: 12px 16px;
+      margin: 12px 0;
+      font-size: 0.93rem;
+    }
+    .tip  { background: #E8F5E9; border-left: 4px solid var(--green);  }
+    .warn { background: #FFF3E0; border-left: 4px solid var(--orange); }
+    .tip  strong { color: #2E7D32; }
+    .warn strong { color: #E65100; }
+
+    /* ── Code ── */
+    code {
+      background: #ECEFF1;
+      border-radius: 4px;
+      padding: 1px 6px;
+      font-family: 'Consolas', monospace;
+      font-size: 0.88em;
+      color: #C62828;
+    }
+    pre {
+      background: #263238;
+      color: #ECEFF1;
+      border-radius: 6px;
+      padding: 16px;
+      overflow-x: auto;
+      font-size: 0.88rem;
+      font-family: 'Consolas', monospace;
+      margin: 10px 0;
+    }
+
+    /* ── UI mock-up ── */
+    .ui-mock {
+      background: #1a1a2e;
+      border-radius: 10px;
+      padding: 20px;
+      color: #eee;
+      font-family: 'Consolas', monospace;
+      font-size: 0.85rem;
+      position: relative;
+    }
+    .ui-mock .title-bar {
+      background: #0D47A1;
+      border-radius: 6px 6px 0 0;
+      padding: 6px 12px;
+      color: #fff;
+      font-weight: 700;
+      margin: -20px -20px 16px -20px;
+      font-family: 'Segoe UI', Arial, sans-serif;
+    }
+    .ui-row  { display: flex; gap: 12px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+    .ui-box  {
+      background: #263238;
+      border: 1px solid #455A64;
+      border-radius: 4px;
+      padding: 6px 12px;
+      min-width: 80px;
+      text-align: center;
+    }
+    .ui-box.big    { font-size: 2rem; font-weight: 700; color: #80CBC4; min-width: 180px; }
+    .ui-box.pass   { background: #1B5E20; border-color: var(--green); color: #A5D6A7; font-weight: 700; }
+    .ui-box.fail   { background: #B71C1C; border-color: var(--red);   color: #EF9A9A; font-weight: 700; }
+    .ui-label { color: #90A4AE; font-size: 0.78rem; }
+    .ui-log {
+      background: #263238;
+      border-radius: 4px;
+      padding: 8px 10px;
+      margin-top: 12px;
+      height: 90px;
+      overflow: hidden;
+      font-size: 0.78rem;
+      color: #B0BEC5;
+    }
+    .ui-log .ok  { color: #A5D6A7; }
+    .ui-log .ng  { color: #EF9A9A; }
+    .ui-log .inf { color: #90CAF9; }
+    .ui-btn {
+      background: #0D47A1;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      padding: 6px 14px;
+      cursor: default;
+      font-size: 0.85rem;
+    }
+
+    /* ── Callout numbers ── */
+    .callout {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 22px; height: 22px;
+      background: var(--blue);
+      color: #fff;
+      border-radius: 50%;
+      font-size: 0.75rem;
+      font-weight: 700;
+      vertical-align: middle;
+      margin-right: 4px;
+    }
+
+    /* ── TOC ── */
+    .toc {
+      background: #E3F2FD;
+      border-radius: 8px;
+      padding: 18px 22px;
+      margin-bottom: 36px;
+    }
+    .toc h3 { color: #0D47A1; margin-bottom: 10px; font-size: 1rem; }
+    .toc ol  { padding-left: 20px; }
+    .toc li  { margin-bottom: 4px; }
+    .toc a   { color: #1565C0; text-decoration: none; font-size: 0.93rem; }
+    .toc a:hover { text-decoration: underline; }
+
+    /* ── Footer ── */
+    footer {
+      text-align: center;
+      color: #9e9e9e;
+      font-size: 0.82rem;
+      padding: 24px;
+      border-top: 1px solid var(--border);
+      margin-top: 40px;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>HIOKI Data Logger</h1>
+  <p>User Guide &mdash; Resistance Measurement &amp; Database Upload</p>
+</header>
+
+<div class="container">
+
+  <!-- TOC -->
+  <div class="toc">
+    <h3>Contents</h3>
+    <ol>
+      <li><a href="#overview">What This App Does</a></li>
+      <li><a href="#requirements">Requirements</a></li>
+      <li><a href="#startup">Starting the App</a></li>
+      <li><a href="#ui">Reading the Screen</a></li>
+      <li><a href="#model">Setting the Product Model</a></li>
+      <li><a href="#limits">Configuring Pass / Fail Limits</a></li>
+      <li><a href="#results">Understanding Measurement Results</a></li>
+      <li><a href="#data">Where Data is Saved</a></li>
+      <li><a href="#db">Database Upload Status</a></li>
+      <li><a href="#reconnect">Connection Loss &amp; Reconnection</a></li>
+      <li><a href="#troubleshoot">Troubleshooting</a></li>
+    </ol>
+  </div>
+
+  <!-- 1. Overview -->
+  <section id="overview">
+    <h2>1 &nbsp; What This App Does</h2>
+    <div class="card">
+      <p>
+        The HIOKI Data Logger connects to a HIOKI resistance meter (RM3544, RM3545, DM7276, etc.)
+        through a USB or RS-232 serial cable and continuously reads resistance measurements.
+        Every stable reading is:
+      </p>
+      <ul style="margin: 10px 0 0 20px;">
+        <li>Displayed live on-screen</li>
+        <li>Compared against your configured upper / lower limits (PASS or FAIL)</li>
+        <li>Saved to a daily CSV file on this PC</li>
+        <li>Uploaded to the factory SQL Server database automatically</li>
+      </ul>
+      <p style="margin-top:10px;">
+        No manual intervention is required &mdash; the app auto-detects the meter,
+        auto-reconnects after cable problems, and queues failed uploads for retry.
+      </p>
+    </div>
+  </section>
+
+  <!-- 2. Requirements -->
+  <section id="requirements">
+    <h2>2 &nbsp; Requirements</h2>
+
+    <h3>Hardware</h3>
+    <table>
+      <tr><th>Item</th><th>Details</th></tr>
+      <tr><td>HIOKI resistance meter</td><td>RM3544-01, RM3545, RM3542, DM7276, DM7275, IM7580A or compatible SCPI model</td></tr>
+      <tr><td>USB or RS-232 cable</td><td>Connect meter to this PC before starting the app</td></tr>
+      <tr><td>Barcode scanner (optional)</td><td>USB HID (keyboard-emulation) type — plug and play, no driver needed</td></tr>
+    </table>
+
+    <h3>Software (pre-installed)</h3>
+    <table>
+      <tr><th>Package</th><th>Purpose</th></tr>
+      <tr><td>Python 3.9+</td><td>Runtime</td></tr>
+      <tr><td>PySide6</td><td>GUI framework</td></tr>
+      <tr><td>pyserial</td><td>Serial port communication</td></tr>
+      <tr><td>pyodbc + ODBC Driver 18</td><td>SQL Server connection</td></tr>
+    </table>
+
+    <div class="tip">
+      <strong>Tip:</strong> If the app has been set up as a Windows or Raspberry Pi service it starts
+      automatically — you do not need to run any commands.
+    </div>
+  </section>
+
+  <!-- 3. Starting -->
+  <section id="startup">
+    <h2>3 &nbsp; Starting the App</h2>
+    <ol class="steps">
+      <li>Plug the HIOKI meter into the PC with the USB / RS-232 cable and power it on.</li>
+      <li>Open a terminal (or double-click the shortcut) and run:
+        <pre>python main.py</pre>
+      </li>
+      <li>The application opens <strong>full-screen</strong> and immediately begins scanning COM ports for a HIOKI device.</li>
+      <li>Once found, the status bar turns <span class="badge badge-green">green</span> and measurements start automatically.</li>
+    </ol>
+
+    <div class="warn">
+      <strong>Note:</strong> Connect the meter <em>before</em> starting the app. If you plug it in after, the app
+      will find it automatically within a few seconds.
+    </div>
+  </section>
+
+  <!-- 4. UI -->
+  <section id="ui">
+    <h2>4 &nbsp; Reading the Screen</h2>
+
+    <div class="ui-mock">
+      <div class="title-bar">HIOKI Auto Hold Mode (Mode 5)</div>
+
+      <div class="ui-row">
+        <div>
+          <div class="ui-label">Model</div>
+          <div class="ui-box ui-btn">SRG14R-MM-4FHX</div>
+        </div>
+        <div>
+          <div class="ui-label">Measurement (Ω)</div>
+          <div class="ui-box big">10.452</div>
+        </div>
+        <div>
+          <div class="ui-label">Judgement</div>
+          <div class="ui-box pass">PASS</div>
+        </div>
+      </div>
+
+      <div class="ui-row">
+        <div>
+          <div class="ui-label">Lower Limit</div>
+          <div class="ui-box">8.000</div>
+        </div>
+        <div>
+          <div class="ui-label">Upper Limit</div>
+          <div class="ui-box">14.000</div>
+        </div>
+        <div>
+          <div class="ui-label">Connection Status</div>
+          <div class="ui-box" style="color:#A5D6A7;">&#9679; Connected on COM3 (polling)</div>
+        </div>
+      </div>
+
+      <div class="ui-log">
+        <div class="inf">12:01:05.441  Auto Hold enabled. Polling FETC?...</div>
+        <div class="ok" >12:01:06.023  10.452  PASS  (CSV: ✓)  (DB: Uploading...)</div>
+        <div class="ok" >12:01:11.048  10.449  PASS  (CSV: ✓)  (DB: Uploading...)</div>
+        <div class="ng" >12:01:16.110  7.892   FAIL: Low  (CSV: ✓)  (DB: Uploading...)</div>
+        <div class="ok" >12:01:21.204  10.451  PASS  (CSV: ✓)  (DB: Uploading...)</div>
+      </div>
+    </div>
+
+    <table style="margin-top:16px;">
+      <tr><th>Element</th><th>Description</th></tr>
+      <tr>
+        <td><strong>Model button</strong></td>
+        <td>Shows the current product model. Click to change it manually.</td>
+      </tr>
+      <tr>
+        <td><strong>Measurement display</strong></td>
+        <td>Live resistance reading from the meter in ohms (Ω). Updates every ~500 ms.</td>
+      </tr>
+      <tr>
+        <td><strong>Judgement</strong></td>
+        <td>
+          <span class="badge badge-green">PASS</span> reading is within limits &nbsp;
+          <span class="badge badge-red">FAIL</span> reading is outside limits &nbsp;
+          <span class="badge badge-gray">N/A</span> cannot be compared
+        </td>
+      </tr>
+      <tr>
+        <td><strong>Lower / Upper Limit</strong></td>
+        <td>Editable spin-boxes. Set your acceptable resistance range here.</td>
+      </tr>
+      <tr>
+        <td><strong>Connection Status</strong></td>
+        <td>
+          <span class="badge badge-green">green</span> connected and polling &nbsp;
+          <span class="badge badge-orange">orange</span> searching / reconnecting &nbsp;
+          <span class="badge badge-red">red</span> not connected
+        </td>
+      </tr>
+      <tr>
+        <td><strong>Log list</strong></td>
+        <td>Every stable reading with timestamp, value, PASS/FAIL, CSV status, and DB upload status.</td>
+      </tr>
+    </table>
+  </section>
+
+  <!-- 5. Model -->
+  <section id="model">
+    <h2>5 &nbsp; Setting the Product Model</h2>
+    <p>The app tags every measurement with a product model name before saving it. There are three ways to set the model:</p>
+
+    <div class="card">
+      <h3><span class="callout">A</span> Barcode Scanner (recommended)</h3>
+      <p>
+        Point a USB barcode scanner at the product label. The model is decoded instantly
+        and shown on the <strong>Model</strong> button. No clicks needed.
+      </p>
+      <div class="tip">
+        <strong>Format:</strong> The scanner must output <strong>Code 39 Extended</strong> with AIM <code>/X</code>
+        escape sequences. The app strips the leading check digit and converts escape codes automatically.<br/>
+        Example: <code>?H60AGV/HFCWR/I-MM-4FHX-B5/D...</code> → <code>H60AGV(FCWR)-MM-4FHX-B5</code>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3><span class="callout">B</span> Model Button (manual)</h3>
+      <ol class="steps">
+        <li>Click the <strong>Model</strong> button (top-left of the screen).</li>
+        <li>Type or paste the model name into the dialog.</li>
+        <li>Click <strong>OK</strong>.</li>
+      </ol>
+      <p style="margin-top:8px;">
+        If you paste a raw barcode string containing <code>$</code> separators
+        (e.g. <code>FOD11850100163$SRG14R-MM-4FHX$15</code>) the app automatically
+        extracts the text between the first and second <code>$</code>.
+      </p>
+    </div>
+
+    <div class="card">
+      <h3><span class="callout">C</span> Auto-Prompt</h3>
+      <p>
+        If the model is empty when a stable reading is recorded, the app displays a
+        model entry dialog automatically so no reading is lost without a label.
+      </p>
+    </div>
+
+    <div class="tip">
+      <strong>Persistence:</strong> The last used model is saved to <code>gui_mode5_config.json</code>
+      and restored automatically on the next startup. If that file is missing, the app recovers the model
+      from <code>model_changes.csv</code>.
+    </div>
+  </section>
+
+  <!-- 6. Limits -->
+  <section id="limits">
+    <h2>6 &nbsp; Configuring Pass / Fail Limits</h2>
+
+    <ol class="steps">
+      <li>
+        Find the <strong>Lower Limit</strong> and <strong>Upper Limit</strong> spin-boxes on the screen.
+      </li>
+      <li>
+        Click the value you want to change and type the new number, or use the up/down arrows.
+        Values are in ohms (Ω). Range: 0.01 – 9999.00 Ω, resolution 0.001 Ω.
+      </li>
+      <li>
+        The new limits are saved immediately to <code>gui_mode5_config.json</code> under the current model name.
+        Switching to a different model will load that model's own limits automatically.
+      </li>
+    </ol>
+
+    <table>
+      <tr><th>Scenario</th><th>Judgement</th></tr>
+      <tr><td>Reading &lt; Lower Limit</td><td><span class="badge badge-red">FAIL: Low</span></td></tr>
+      <tr><td>Lower Limit ≤ Reading ≤ Upper Limit</td><td><span class="badge badge-green">PASS</span></td></tr>
+      <tr><td>Reading &gt; Upper Limit</td><td><span class="badge badge-red">FAIL: High</span></td></tr>
+      <tr><td>Non-numeric reading</td><td><span class="badge badge-gray">N/A</span></td></tr>
+    </table>
+
+    <div class="warn">
+      <strong>Warning:</strong> Make sure the Lower Limit is smaller than the Upper Limit.
+      The app does not enforce this automatically.
+    </div>
+  </section>
+
+  <!-- 7. Results -->
+  <section id="results">
+    <h2>7 &nbsp; Understanding Measurement Results</h2>
+
+    <div class="card">
+      <h3>Stability detection</h3>
+      <p>
+        The app reads the meter every 500 ms. A reading is only <strong>recorded</strong>
+        (logged + uploaded) when the same value is seen <strong>twice in a row</strong> —
+        this confirms the meter's Auto Hold has locked on to a stable measurement.
+        Unstable or transitional readings are silently discarded.
+      </p>
+    </div>
+
+    <div class="card">
+      <h3>Log line format</h3>
+      <pre>12:01:06.023  10.452  PASS  (CSV: ✓)  (DB: Uploading...)</pre>
+      <table>
+        <tr><th>Field</th><th>Meaning</th></tr>
+        <tr><td><code>12:01:06.023</code></td><td>Time the reading was recorded (HH:MM:SS.ms)</td></tr>
+        <tr><td><code>10.452</code></td><td>Resistance value in ohms</td></tr>
+        <tr><td><code>PASS / FAIL: Low / FAIL: High</code></td><td>Limit comparison result</td></tr>
+        <tr><td><code>(CSV: ✓)</code></td><td>Written to daily CSV file successfully</td></tr>
+        <tr><td><code>(DB: Uploading...)</code></td><td>Sent to SQL Server (see Section 9)</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <!-- 8. Data -->
+  <section id="data">
+    <h2>8 &nbsp; Where Data is Saved</h2>
+
+    <table>
+      <tr><th>File</th><th>Contents</th><th>Created by</th></tr>
+      <tr>
+        <td><code>YYYYMMDD.csv</code><br/>(e.g. <code>20260619.csv</code>)</td>
+        <td>Every stable reading: Timestamp, Resistance, Status (OK/NG/N/A), Model, Date, Time, DB_Status</td>
+        <td>Automatically, one new file per calendar day</td>
+      </tr>
+      <tr>
+        <td><code>model_changes.csv</code></td>
+        <td>Audit log of every model switch: Timestamp, Action, Previous Model, New Model, Source</td>
+        <td>Automatically on every model change or startup</td>
+      </tr>
+      <tr>
+        <td><code>gui_mode5_config.json</code></td>
+        <td>Current model name and per-model limit settings</td>
+        <td>Automatically when limits or model change</td>
+      </tr>
+      <tr>
+        <td><code>pending_uploads.json</code></td>
+        <td>DB retry queue — records that failed to upload, retried on next successful connection</td>
+        <td>Automatically when DB is unreachable</td>
+      </tr>
+    </table>
+
+    <div class="tip">
+      <strong>No data is lost</strong> when the database is offline. All readings are written to the
+      daily CSV first; failed DB uploads are queued and retried automatically when the server
+      becomes reachable again.
+    </div>
+  </section>
+
+  <!-- 9. DB -->
+  <section id="db">
+    <h2>9 &nbsp; Database Upload Status</h2>
+    <p>Every stable reading is uploaded to the factory SQL Server. The log line shows the current upload state:</p>
+
+    <table>
+      <tr><th>Log text</th><th>Meaning</th></tr>
+      <tr><td><code>(DB: Uploading...)</code></td><td>Upload request sent to background thread</td></tr>
+      <tr><td><code>(DB: No Model)</code></td><td>No model set — click the Model button first</td></tr>
+      <tr><td><code>(DB: Wait 10s)</code></td><td>Upload rate-limited (5 s minimum between uploads)</td></tr>
+      <tr><td><code>! DB unreachable — N queued, retry in Xs</code></td><td>Server not reachable; record is queued for automatic retry</td></tr>
+      <tr><td><code>Server back — uploading N queued record(s)...</code></td><td>Server came back; queued records are being flushed</td></tr>
+    </table>
+
+    <h3>Database table</h3>
+    <pre>resistance (
+  Timestamp  DATETIME,   -- auto set by server
+  Resistance FLOAT,      -- ohms
+  Status     NVARCHAR,   -- 'OK', 'NG', or 'N/A'
+  Model      NVARCHAR,   -- product model name
+  Date       DATE,
+  Time       TIME
+)</pre>
+  </section>
+
+  <!-- 10. Reconnect -->
+  <section id="reconnect">
+    <h2>10 &nbsp; Connection Loss &amp; Reconnection</h2>
+    <p>The app handles cable disconnections and serial errors automatically:</p>
+
+    <div class="card">
+      <table>
+        <tr><th>Mechanism</th><th>Detail</th></tr>
+        <tr>
+          <td>Exponential back-off</td>
+          <td>Retry delay starts at 1 s, grows by ×1.5 each attempt, capped at 60 s</td>
+        </tr>
+        <tr>
+          <td>Heartbeat check</td>
+          <td>Sends <code>*IDN?</code> to the meter every 30 s to detect silent failures</td>
+        </tr>
+        <tr>
+          <td>Timeout limit</td>
+          <td>3 consecutive FETC? timeouts trigger a full reconnect cycle</td>
+        </tr>
+        <tr>
+          <td>Poll thread crash guard</td>
+          <td>Any unexpected serial error causes a clean reconnect rather than a crash</td>
+        </tr>
+      </table>
+    </div>
+
+    <p>
+      While reconnecting the status bar shows <span class="badge badge-orange">Scanning ports (retry in Xs)…</span>.
+      No action is needed — plug the cable back in and the app finds it automatically.
+    </p>
+  </section>
+
+  <!-- 11. Troubleshoot -->
+  <section id="troubleshoot">
+    <h2>11 &nbsp; Troubleshooting</h2>
+
+    <div class="card">
+      <h3>Status stays red — "No HIOKI device found"</h3>
+      <ol class="steps">
+        <li>Check that the USB / RS-232 cable is firmly connected at both ends.</li>
+        <li>Verify the meter is powered on and not in local-only mode.</li>
+        <li>On Windows, open Device Manager and confirm a COM port appears for the meter.</li>
+        <li>The app retries automatically every few seconds — wait or reconnect the cable.</li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <h3>Readings show "Timeout Error" repeatedly</h3>
+      <p>
+        The meter is detected but not responding to data queries.
+        Check that the baud rate matches (should be 9600) and that no other program
+        (e.g. HiLogger software) has the COM port open.
+      </p>
+    </div>
+
+    <div class="card">
+      <h3>Model button shows "Model" (empty)</h3>
+      <p>
+        No product model has been set. Click <strong>Model</strong> and type the model name,
+        or scan a barcode. If you close this dialog without entering anything, the app will
+        prompt again when the next stable reading is captured.
+      </p>
+    </div>
+
+    <div class="card">
+      <h3>DB upload keeps failing — "N queued"</h3>
+      <p>
+        The SQL Server is unreachable (network down, server offline, or wrong credentials).
+        Records are queued in <code>pending_uploads.json</code> and will upload automatically
+        once connectivity is restored. CSV data is always saved locally regardless.
+      </p>
+    </div>
+
+    <div class="card">
+      <h3>Barcode scanner does not change the model</h3>
+      <ol class="steps">
+        <li>Ensure the scanner is configured for <strong>Code 39 Extended</strong> with <strong>AIM output</strong> enabled.</li>
+        <li>The scanner must output characters quickly (within 100 ms per character) — slow scanners may not trigger decoding.</li>
+        <li>Check <code>model_changes.csv</code> — if a barcode row appears there the scan was received but the format may be incorrect.</li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <h3>App does not start / Python error on launch</h3>
+      <ol class="steps">
+        <li>Confirm all packages are installed: <code>pip install -r requirements.txt</code></li>
+        <li>Confirm ODBC Driver 18 for SQL Server is installed (required even if DB is unreachable).</li>
+        <li>On Raspberry Pi, run the setup script: <code>sudo ./setup_services.sh</code></li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <h3>Log file grows too large</h3>
+      <p>
+        The on-screen log keeps only the last 500 lines. The CSV files accumulate indefinitely —
+        archive or delete old <code>YYYYMMDD.csv</code> files periodically if disk space is a concern.
+      </p>
+    </div>
+  </section>
+
+</div><!-- /container -->
+
+<footer>
+  HIOKI Data Logger &mdash; User Guide &nbsp;|&nbsp; Generated 2026-06-19
+</footer>
+
+</body>
+</html>

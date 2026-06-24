@@ -7,7 +7,8 @@ A Python GUI application that reads resistance measurements from HIOKI multimete
 - Auto-detects HIOKI devices on available COM ports
 - Real-time resistance measurement polling (500 ms interval)
 - Per-model pass/fail limit configuration with persistent storage
-- **Barcode scanner input** — USB HID scanner auto-sets the active model (AIM Code 39 Extended decoding)
+- **Audio feedback** — plays a Thai-language voice alert on every PASS (`ResistancePass_TH.mp3`) or FAIL (`ResistanceOver_TH.mp3`)
+- **Barcode scanner input** — USB HID scanner auto-sets the active model; all three entry methods share the same unified decode logic (AIM Code 39 Extended, `$`-delimited, and plain text)
 - **Model change log** (`model_changes.csv`) — audit trail of every model switch; used to auto-recover the last model after a crash or reboot
 - Local CSV logging (daily files, no data loss on DB failure)
 - Background database uploads with persistent retry queue
@@ -22,8 +23,8 @@ A Python GUI application that reads resistance measurements from HIOKI multimete
 **Python 3.9+** with PySide6:
 
 ```
-PySide6
-pyserial        # provides serial.tools.list_ports
+PySide6       # includes QtMultimedia (QMediaPlayer) via pyside6-addons
+pyserial      # provides serial.tools.list_ports
 pyodbc
 watchdog
 requests
@@ -36,8 +37,12 @@ requests
 
 ```bash
 sudo apt install python3-serial python3-venv python3-pip \
-                 unixodbc-dev libglib2.0-0 libdbus-1-3 libxcb-cursor-dev
+                 unixodbc-dev libglib2.0-0 libdbus-1-3 libxcb-cursor-dev \
+                 gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+                 gstreamer1.0-alsa gstreamer1.0-libav
 ```
+
+> The GStreamer packages are required for `QMediaPlayer` to decode and play MP3 files on Linux.
 
 ### Database
 
@@ -101,27 +106,46 @@ python main.py
 
 The application starts full-screen, auto-detects the connected HIOKI device, and begins polling once a device is found.
 
+## Testing Audio Feedback (Without a Device)
+
+Two keyboard shortcuts let you test the PASS/FAIL sounds without a connected HIOKI meter:
+
+| Shortcut | Effect |
+|---|---|
+| **Ctrl+P** | Simulate PASS — green button + plays `ResistancePass_TH.mp3` |
+| **Ctrl+F** | Simulate FAIL — red button + plays `ResistanceOver_TH.mp3` |
+
+Both shortcuts work at any time while the application is running.
+
 ## Setting the Model
 
 Three ways to set the active product model:
 
 | Method | How |
 |---|---|
-| **Barcode scanner** | Point a USB HID scanner at the product label — the model is decoded and applied instantly (AIM Code 39 Extended format) |
-| **Model button** | Click the large **Model** button and type or paste the model string |
+| **Barcode scanner** | Point a USB HID scanner at the product label — decoded and applied instantly |
+| **Model button** | Click the large **Model** button and type or paste any supported format (plain name, `$`-delimited raw, or AIM Code 39 raw) |
 | **Auto-prompt** | If no model is set when a stable reading is recorded, the app prompts automatically |
 
 The last used model is saved to `gui_mode5_config.json` and restored on the next startup. If that file is missing or empty, the app recovers the model from `model_changes.csv`.
 
-### Barcode Format
+### Barcode Decode Logic
 
-The scanner must output **Code 39 Extended with AIM `/X` escape sequences**. The app:
+All three model-entry paths (scanner, Model button, auto-prompt) run through the same unified decode function in the order below:
+
+| Priority | Format | Detection | Example input | Result |
+|---|---|---|---|---|
+| 1 | **Dollar-delimited** | contains `$` | `FOD123$1SRG14R(BRK)-MM$15` | `SRG14R(BRK)-MM` |
+| 2 | **AIM Code 39 Extended** | contains `/[A-Z]` escape pair | `?H60AGV/HFCWR/I-MM-4FHX-B5/D...` | `H60AGV(FCWR)-MM-4FHX-B5` |
+| 3 | **Plain text** | no `$` or `/X` patterns | `SRG14R-MM-4FHX-B5` | `SRG14R-MM-4FHX-B5` |
+
+#### AIM Code 39 Extended details
 
 1. Strips the leading check-digit character
-2. Converts `/H` → `(`, `/I` → `)`, `/L` → `/`, etc.
+2. Converts `/H` → `(`, `/I` → `)`, `/L` → `/`, etc. (see full table in [barcodereader.md](barcodereader.md))
 3. Stops at `/D` (field separator)
 
-Example: raw `?H60AGV/HFCWR/I-MM-4FHX-B5/D...` → decoded `H60AGV(FCWR)-MM-4FHX-B5`.
+This means you can scan a label, or paste the raw barcode string into the Model button dialog — both produce the same decoded model name.
 
 ## Project Structure
 
@@ -132,6 +156,10 @@ Example: raw `?H60AGV/HFCWR/I-MM-4FHX-B5/D...` → decoded `H60AGV(FCWR)-MM-4FHX
 ├── db_upload_manager.py       # Background upload queue with retry
 ├── ui_UI_Resistance.py        # Qt UI code (PySide6)
 ├── UI_Resistance.ui           # Qt Designer UI definition
+├── numpad_dialog.py           # On-screen numeric keypad for touchscreen limit entry
+│
+├── ResistancePass_TH.mp3      # Audio alert played on PASS result
+├── ResistanceOver_TH.mp3      # Audio alert played on FAIL result
 │
 ├── gui_mode5_config.json      # Per-model pass/fail limits + last model
 ├── model_changes.csv          # Audit log of every model switch (auto-created)

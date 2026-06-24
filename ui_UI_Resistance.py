@@ -22,7 +22,6 @@ class Ui_Dialog(object):
     def setupUi(self, Dialog):
         if Dialog.objectName():
             Dialog.setObjectName(u"Dialog")
-        Dialog.resize(1280, 800)
         sizePolicy = QSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Maximum)
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(0)
@@ -39,17 +38,42 @@ class Ui_Dialog(object):
         self.groupBox_status.setFont(font)
         self.horizontalLayout_2 = QHBoxLayout(self.groupBox_status)
         self.horizontalLayout_2.setObjectName(u"horizontalLayout_2")
-        self.label_ConnectionStatus = QLabel(self.groupBox_status)
-        self.label_ConnectionStatus.setObjectName(u"label_ConnectionStatus")
-        self.horizontalLayout_2.addWidget(self.label_ConnectionStatus)
+
+        # ── Left: USB + WiFi cards stacked vertically ─────────────────────────
+        self.statusCardsLayout = QVBoxLayout()
+        self.statusCardsLayout.setSpacing(4)
+
+        self.frame_usb = QFrame(self.groupBox_status)
+        self.frame_usb.setObjectName(u"frame_usb")
+        self.frame_usb.setFrameShape(QFrame.Shape.StyledPanel)
+        self.usb_card_layout = QVBoxLayout(self.frame_usb)
+        self.usb_card_layout.setContentsMargins(6, 4, 6, 4)
+        self.label_usb_status = QLabel(self.frame_usb)
+        self.label_usb_status.setObjectName(u"label_usb_status")
+        self.label_usb_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.usb_card_layout.addWidget(self.label_usb_status)
+        self.statusCardsLayout.addWidget(self.frame_usb)
+
+        self.frame_wifi = QFrame(self.groupBox_status)
+        self.frame_wifi.setObjectName(u"frame_wifi")
+        self.frame_wifi.setFrameShape(QFrame.Shape.StyledPanel)
+        self.wifi_card_layout = QVBoxLayout(self.frame_wifi)
+        self.wifi_card_layout.setContentsMargins(6, 4, 6, 4)
+        self.label_wifi = QLabel(self.frame_wifi)
+        self.label_wifi.setObjectName(u"label_wifi")
+        self.label_wifi.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.wifi_card_layout.addWidget(self.label_wifi)
+        self.statusCardsLayout.addWidget(self.frame_wifi)
+
+        self.horizontalLayout_2.addLayout(self.statusCardsLayout)
 
         self.pushButton_model = QPushButton(self.groupBox_status)
         self.pushButton_model.setObjectName(u"pushButton_model")
-        self.pushButton_model.setMinimumSize(QSize(800, 120))
+        self.pushButton_model.setMinimumHeight(80)
         font1 = QFont()
         font1.setPointSize(25)
         self.pushButton_model.setFont(font1)
-        self.horizontalLayout_2.addWidget(self.pushButton_model)
+        self.horizontalLayout_2.addWidget(self.pushButton_model, 1)
 
         self.verticalLayout.addWidget(self.groupBox_status)
 
@@ -163,9 +187,11 @@ class Ui_Dialog(object):
 
     def retranslateUi(self, Dialog):
         Dialog.setWindowTitle(QCoreApplication.translate("Dialog", u"Dialog", None))
-        self.groupBox_status.setTitle(QCoreApplication.translate("Dialog", u"Status", None))
-        self.label_ConnectionStatus.setText(QCoreApplication.translate("Dialog", u"Connection Status", None))
+        self.groupBox_status.setTitle(u"")
+        #self.label_ConnectionStatus.setText(QCoreApplication.translate("Dialog", u"Connection Status", None))
         self.pushButton_model.setText(QCoreApplication.translate("Dialog", u"Model", None))
+        self.label_usb_status.setText(QCoreApplication.translate("Dialog", u"○ USB  Disconnected", None))
+        self.label_wifi.setText(QCoreApplication.translate("Dialog", u"WiFi  ---", None))
         self.groupBox_Resistance.setTitle(QCoreApplication.translate("Dialog", u"Resistance", None))
         self.groupBox_MeasureValue.setTitle(QCoreApplication.translate("Dialog", u"Measured", None))
         self.groupBox_UpperLimit.setTitle(QCoreApplication.translate("Dialog", u"Upper Limit", None))

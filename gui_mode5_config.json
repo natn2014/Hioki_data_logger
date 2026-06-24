@@ -11,7 +11,7 @@
     },
     "SRG14-WS": {
       "lower_limit": 8.7,
-      "upper_limit": 13.1
+      "upper_limit": 9.0
     }
   }
 }

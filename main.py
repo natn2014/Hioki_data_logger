@@ -11,17 +11,20 @@ import time
 import json
 import os
 import csv
+import subprocess
 import serial
 import serial.tools.list_ports
 from datetime import datetime
-from PySide6.QtCore import QTimer, QThread, Signal, Qt, QStringListModel
+from PySide6.QtCore import QTimer, QThread, Signal, Qt, QStringListModel, QEvent, QUrl
+from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtWidgets import (
     QApplication, QDialog, QMessageBox, QInputDialog, QAbstractSpinBox
 )
-from PySide6.QtGui import QPalette, QColor
+from PySide6.QtGui import QFont
 from usb_rs import Usb_rs
 from insert_resistance2db import insert_to_mssql
 from ui_UI_Resistance import Ui_Dialog
+from numpad_dialog import NumpadDialog
 from db_upload_manager import DBUploadManager, UploadSignals
 
 BAUD_RATE = 9600
@@ -150,6 +153,41 @@ class PollWorkerThread(QThread):
         self._running = False
 
 
+class WiFiWorkerThread(QThread):
+    wifi_ready = Signal(int)  # percentage 0-100, or -1 if unavailable
+
+    def __init__(self):
+        super().__init__()
+        self._running = False
+
+    def run(self):
+        self._running = True
+        while self._running:
+            self.wifi_ready.emit(self._get_signal())
+            for _ in range(50):  # 5-second interruptible sleep
+                if not self._running:
+                    break
+                time.sleep(0.1)
+
+    def _get_signal(self):
+        try:
+            result = subprocess.run(
+                ['netsh', 'wlan', 'show', 'interfaces'],
+                capture_output=True, text=True, timeout=3,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+            for line in result.stdout.splitlines():
+                s = line.strip()
+                if s.startswith('Signal') and ':' in s:
+                    return int(s.split(':', 1)[1].strip().replace('%', ''))
+        except Exception:
+            pass
+        return -1
+
+    def stop(self):
+        self._running = False
+
+
 class MainWindow(QDialog):
     def __init__(self):
         super().__init__()
@@ -174,6 +212,10 @@ class MainWindow(QDialog):
         self.cleaned_model = ""
         self.last_db_insert_time = None
 
+        self._audio_output = QAudioOutput()
+        self._media_player = QMediaPlayer()
+        self._media_player.setAudioOutput(self._audio_output)
+
         # Barcode scanner input accumulator (USB HID scanner types as keyboard)
         self._barcode_buffer = ""
         self._barcode_timer = QTimer(self)
@@ -188,6 +230,7 @@ class MainWindow(QDialog):
 
         # Background poll thread — owns all serial I/O after connection
         self.poll_thread = None
+        self.wifi_thread = None
 
         # Non-blocking timers: reconnect scheduling and upload retry only
         self.detect_retry_timer = QTimer(self)
@@ -206,6 +249,7 @@ class MainWindow(QDialog):
         self.ui = Ui_Dialog()
         self.ui.setupUi(self)
         self.setWindowTitle("HIOKI Auto Hold Mode (Mode 5)")
+        self._apply_ui_scale()
 
         # Configure spinboxes for limits
         self.ui.doubleSpinBox_lowerLimit.setRange(0.01, 9999.0)
@@ -219,6 +263,10 @@ class MainWindow(QDialog):
         self.ui.doubleSpinBox_UpperLimit.setSingleStep(0.01)
         self.ui.doubleSpinBox_UpperLimit.setValue(self.upper_limit)
         self.ui.doubleSpinBox_UpperLimit.valueChanged.connect(self.on_limit_changed)
+
+        # Open numpad on click for limit spinboxes
+        self.ui.doubleSpinBox_UpperLimit.lineEdit().installEventFilter(self)
+        self.ui.doubleSpinBox_lowerLimit.lineEdit().installEventFilter(self)
 
         # Measurement display is read-only
         self.ui.doubleSpinBox_Measure.setReadOnly(True)
@@ -240,13 +288,102 @@ class MainWindow(QDialog):
             self.log_event(f"Found {pending_count} pending uploads to retry")
             self.append_log(f"! {pending_count} value(s) waiting to upload")
 
+        # Initialise status badges and start background WiFi monitor
+        self._set_usb_status("disconnected")
+        self.wifi_thread = WiFiWorkerThread()
+        self.wifi_thread.wifi_ready.connect(self._on_wifi_ready)
+        self.wifi_thread.start()
+
+    def _apply_ui_scale(self):
+        screen = QApplication.primaryScreen().availableGeometry()
+        scale = min(screen.width() / 1280.0, screen.height() / 800.0, 1.0)
+
+        def sf(pt, bold=False):
+            f = QFont()
+            f.setPointSize(max(8, round(pt * scale)))
+            if bold:
+                f.setBold(True)
+                f.setWeight(QFont.Weight.Bold)
+            return f
+
+        def px(v):
+            return max(1, round(v * scale))
+
+        ui = self.ui
+        ui.groupBox_status.setFont(sf(12))
+        ui.label_usb_status.setFont(sf(13, bold=True))
+        ui.label_wifi.setFont(sf(13, bold=True))
+        ui.pushButton_model.setFont(sf(25))
+        ui.pushButton_model.setMinimumHeight(px(80))
+
+        ui.groupBox_Resistance.setFont(sf(12))
+        ui.groupBox_MeasureValue.setFont(sf(24, bold=True))
+        ui.doubleSpinBox_Measure.setFont(sf(72, bold=True))
+
+        ui.groupBox_UpperLimit.setFont(sf(18))
+        ui.doubleSpinBox_UpperLimit.setFont(sf(30))
+        ui.groupBox_LowerLimit.setFont(sf(18))
+        ui.doubleSpinBox_lowerLimit.setFont(sf(30))
+
+        ui.groupBox_Judge.setFont(sf(12))
+        ui.pushButton_Judgement.setFont(sf(48))
+
+        ui.groupBox.setFont(sf(12))
+
+    def _set_usb_status(self, state):
+        props = {
+            "connected":    ("● USB  Connected",    "#4CAF50"),
+            "connecting":   ("◌ USB  Connecting",   "#FF9800"),
+            "disconnected": ("○ USB  Disconnected", "#f44336"),
+        }
+        text, color = props.get(state, ("○ USB  Disconnected", "#f44336"))
+        self.ui.label_usb_status.setText(text)
+        self.ui.label_usb_status.setStyleSheet(
+            f"color: {color}; font-weight: bold; "
+            f"border: 2px solid {color}; border-radius: 6px; padding: 4px 10px;"
+        )
+
+    def _on_wifi_ready(self, pct):
+        if pct < 0:
+            self.ui.label_wifi.setText("WiFi  ---")
+            self.ui.label_wifi.setStyleSheet("color: #888; font-weight: bold;")
+            return
+        bar_chars = "▂▄▆█"
+        n = 0 if pct < 20 else 1 if pct < 40 else 2 if pct < 60 else 3 if pct < 80 else 4
+        bars = ''.join(bar_chars[i] if i < n else '░' for i in range(4))
+        color = "#4CAF50" if pct >= 70 else "#FF9800" if pct >= 40 else "#f44336"
+        self.ui.label_wifi.setText(f"WiFi {bars} {pct}%")
+        self.ui.label_wifi.setStyleSheet(f"color: {color}; font-weight: bold;")
+
+    def eventFilter(self, source, event):
+        if event.type() == QEvent.Type.MouseButtonPress:
+            if source is self.ui.doubleSpinBox_UpperLimit.lineEdit():
+                self._show_numpad_for_spinbox(self.ui.doubleSpinBox_UpperLimit, "Upper Limit")
+                return True
+            elif source is self.ui.doubleSpinBox_lowerLimit.lineEdit():
+                self._show_numpad_for_spinbox(self.ui.doubleSpinBox_lowerLimit, "Lower Limit")
+                return True
+        return super().eventFilter(source, event)
+
+    def _show_numpad_for_spinbox(self, spinbox, label):
+        dlg = NumpadDialog(
+            current_value=spinbox.value(),
+            decimals=3,
+            title=label,
+            min_val=spinbox.minimum(),
+            max_val=spinbox.maximum(),
+            parent=self,
+        )
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            spinbox.setValue(dlg.get_value())
+
     def start_auto_detect(self):
         if self.connected or self.detect_in_progress:
             return
         self.detect_in_progress = True
         self.reconnect_delay = min(self.reconnect_delay * 1.5, self.max_reconnect_delay)  # Exponential backoff
         self.log_event(f"Auto-detect starting (reconnect delay: {self.reconnect_delay:.1f}s)")
-        self.set_status(f"Scanning ports (retry in {self.reconnect_delay:.0f}s)...", "orange")
+        self._set_usb_status("connecting")
         self.det_thread = AutoDetectThread()
         self.det_thread.found.connect(self.on_port_found)
         self.det_thread.not_found.connect(self.on_port_not_found)
@@ -413,12 +550,36 @@ class MainWindow(QDialog):
         # Return text between first and second '$'
         return text_after_first[:second_dollar]
 
+    def _decode_model_text(self, raw):
+        """Unified decode for all barcode / manual-entry formats.
+
+        Priority:
+        1. Dollar-delimited  — PREFIX$[id]MODEL$SUFFIX  (label-printer format)
+        2. AIM Code 39 Extended — /X escape sequences   (USB HID scanner format)
+        3. Plain text — returned as-is after strip
+        """
+        raw = raw.strip()
+        if not raw:
+            return ''
+        if '$' in raw:
+            first = raw.find('$')
+            after = raw[first + 1:]
+            second = after.find('$')
+            return (after[:second] if second != -1 else after).strip()
+        # AIM Code 39: presence of /[A-Z] escape pair signals encoded barcode
+        if any(raw[i] == '/' and i + 1 < len(raw) and raw[i + 1].isupper()
+               for i in range(len(raw))):
+            decoded = decode_barcode(raw)
+            if decoded:
+                return decoded
+        return raw
+
     def on_model_clicked(self):
         """Prompt user for model, clean it, show on button, and load its limits."""
         text, ok = QInputDialog.getText(self, "Model", "Enter model text:", text=self.cleaned_model)
         if ok:
             old_model = self.cleaned_model
-            cleaned = self.clean_raw_text(text)
+            cleaned = self._decode_model_text(text)
             self.cleaned_model = cleaned
             self.ui.pushButton_model.setText(cleaned if cleaned else "Model")
             self.load_model_limits()
@@ -455,6 +616,16 @@ class MainWindow(QDialog):
         """
         key = event.key()
         text = event.text()
+        modifiers = event.modifiers()
+        if modifiers == Qt.KeyboardModifier.ControlModifier:
+            if key == Qt.Key.Key_P:
+                self.set_judgement_status(True)
+                event.accept()
+                return
+            elif key == Qt.Key.Key_F:
+                self.set_judgement_status(False)
+                event.accept()
+                return
         if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             if self._barcode_buffer:
                 self._barcode_timer.stop()
@@ -478,7 +649,7 @@ class MainWindow(QDialog):
         self._barcode_buffer = ""
         if len(raw) < 3:
             return
-        decoded = decode_barcode(raw)
+        decoded = self._decode_model_text(raw)
         if not decoded:
             self.log_event(f"Barcode scan: decode failed for '{raw}'")
             self.append_log(f"Barcode: unrecognised format — {raw}")
@@ -511,14 +682,14 @@ class MainWindow(QDialog):
         self.current_port = port
         self.reconnect_delay = 1.0  # Reset backoff on successful detection
         self.log_event(f"HIOKI device found: {port} - {idn}")
-        self.set_status(f"Found HIOKI on {port} ({idn})", "green")
+        self._set_usb_status("connected")
         # Auto start measurement once device detected
         self.start_mode()
 
     def on_port_not_found(self):
         self.detect_in_progress = False
         self.log_event("No HIOKI device found, scheduling retry...")
-        self.set_status("No HIOKI device found", "red")
+        self._set_usb_status("disconnected")
         # Retry detection with exponential backoff
         retry_ms = int(self.reconnect_delay * 1000)
         self.detect_retry_timer.start(retry_ms)
@@ -556,8 +727,6 @@ class MainWindow(QDialog):
 
             self.append_log("Auto Hold enabled. Polling FETC?...")
             self.log_event("Device configured and polling started")
-            self.set_status(f"Connected on {self.current_port} (polling)", "green")
-
             # Start background poll thread — all serial I/O moves off the main thread
             self.poll_thread = PollWorkerThread(
                 self.serial_obj, POLL_INTERVAL_MS, health_check_interval=30
@@ -573,7 +742,6 @@ class MainWindow(QDialog):
         except Exception as e:
             self.log_event(f"Connection failed: {e}")
             QMessageBox.critical(self, "Connection Error", str(e))
-            self.set_status("Connection failed", "red")
             self.connected = False
 
     def on_fetch_result(self, msg):
@@ -652,7 +820,7 @@ class MainWindow(QDialog):
             if not cleaned_model:
                 text, ok = QInputDialog.getText(self, "Model", "Enter model text:")
                 if ok:
-                    cleaned_model = self.clean_raw_text(text).strip()
+                    cleaned_model = self._decode_model_text(text)
                     self.log_model_change("CHANGE", "", cleaned_model, "prompt")
                     self.cleaned_model = cleaned_model
                     self.ui.pushButton_model.setText(cleaned_model if cleaned_model else "Model")
@@ -777,7 +945,7 @@ class MainWindow(QDialog):
             self.previous_numeric = None
             self.previous_raw = None
             self.consecutive_timeouts = 0
-            self.set_status("Connection lost, retrying...", "orange")
+            self._set_usb_status("connecting")
             # Use exponential backoff for retry
             retry_ms = int(self.reconnect_delay * 1000)
             self.log_event(f"Scheduling reconnection attempt in {self.reconnect_delay:.1f}s")
@@ -803,10 +971,14 @@ class MainWindow(QDialog):
         self.retry_upload_timer.stop()
         self._close_serial_connection()
         self.connected = False
-        self.set_status("Stopped", "red")
+        self._set_usb_status("disconnected")
 
     def closeEvent(self, event):
         self.log_event("Application closing")
+        if self.wifi_thread is not None:
+            self.wifi_thread.stop()
+            self.wifi_thread.wait(3000)
+            self.wifi_thread = None
         # Stop poll thread and wait for clean exit before closing the serial port
         if self.poll_thread is not None:
             self.poll_thread.stop()
@@ -821,18 +993,13 @@ class MainWindow(QDialog):
             self.log_event(f"Application closing with {pending_count} pending uploads (saved for next run)")
         event.accept()
 
-    def set_status(self, text, color):
-        color_map = {
-            "green": "#4CAF50",
-            "red": "#f44336",
-            "orange": "#FF9800"
-        }
-        label = self.ui.label_ConnectionStatus
-        label.setText(f"Status: {text}")
-        palette = label.palette()
-        palette.setColor(QPalette.ColorRole.WindowText, QColor(color_map.get(color, 'black')))
-        label.setPalette(palette)
-        label.setStyleSheet("font-weight: bold;")
+    def _play_sound(self, filename):
+        app_dir = os.path.dirname(os.path.abspath(__file__))
+        path = os.path.join(app_dir, filename)
+        if os.path.exists(path):
+            self._media_player.stop()
+            self._media_player.setSource(QUrl.fromLocalFile(path))
+            self._media_player.play()
 
     def set_judgement_status(self, pass_result):
         """Update judgement indicator button based on pass/fail result."""
@@ -844,6 +1011,10 @@ class MainWindow(QDialog):
         text, color = judgement_map.get(pass_result, ("N/A", "#9e9e9e"))
         self.ui.pushButton_Judgement.setText(text)
         self.ui.pushButton_Judgement.setStyleSheet(f"background-color: {color}; color: white; font-weight: bold;")
+        if pass_result is True:
+            self._play_sound("ResistancePass_TH.mp3")
+        elif pass_result is False:
+            self._play_sound("ResistanceOver_TH.mp3")
 
     def log_event(self, event_text):
         """Log detailed event to console with timestamp for debugging."""

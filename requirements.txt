@@ -1,5 +1,5 @@
-PySide6
+PySide6               # includes QtMultimedia (QMediaPlayer) via pyside6-addons
 pyodbc
-pyserial        # provides serial.tools.list_ports  (NOT the 'serial' package)
+pyserial              # provides serial.tools.list_ports  (NOT the 'serial' package)
 watchdog
 requests
