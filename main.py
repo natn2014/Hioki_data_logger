@@ -173,8 +173,8 @@ class WiFiWorkerThread(QThread):
         try:
             result = subprocess.run(
                 ['netsh', 'wlan', 'show', 'interfaces'],
-                capture_output=True, text=True, timeout=3,
-                creationflags=subprocess.CREATE_NO_WINDOW,
+                capture_output=True, text=True, encoding='utf-8', errors='ignore',
+                timeout=3, creationflags=subprocess.CREATE_NO_WINDOW,
             )
             for line in result.stdout.splitlines():
                 s = line.strip()
