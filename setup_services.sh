@@ -68,7 +68,11 @@ apt-get install -y --no-install-recommends \
     unixodbc-dev \
     libglib2.0-0 \
     libdbus-1-3 \
-    libxcb-cursor-dev
+    libxcb-cursor-dev \
+    gstreamer1.0-plugins-base \
+    gstreamer1.0-plugins-good \
+    gstreamer1.0-alsa \
+    gstreamer1.0-libav
 echo ">> System packages installed."
 
 # ── Install Microsoft ODBC Driver 18 for SQL Server ──────────────────────────
@@ -183,6 +187,7 @@ check_import() {
 check_import "PySide6.QtWidgets"       "PySide6.QtWidgets"
 check_import "PySide6.QtCore"          "PySide6.QtCore"
 check_import "PySide6.QtGui"           "PySide6.QtGui"
+check_import "PySide6.QtMultimedia"    "PySide6.QtMultimedia  (audio playback)"
 check_import "serial.tools.list_ports" "pyserial  (serial.tools.list_ports)"
 check_import "pyodbc"                  "pyodbc"
 check_import "watchdog"                "watchdog"
@@ -203,6 +208,17 @@ else
     fail "$ODBC_DRIVER  (not registered — available drivers: $AVAILABLE)"
     FAIL=$((FAIL + 1))
 fi
+
+# Verify required audio files are present
+for audio_file in "ResistancePass_TH.mp3" "ResistanceOver_TH.mp3"; do
+    if [ -f "$APP_DIR/$audio_file" ]; then
+        ok "$audio_file  (found)"
+        PASS=$((PASS + 1))
+    else
+        fail "$audio_file  ← file missing from $APP_DIR"
+        FAIL=$((FAIL + 1))
+    fi
+done
 
 echo ""
 if [ "$FAIL" -gt 0 ]; then

@@ -215,6 +215,9 @@ class MainWindow(QDialog):
         self._audio_output = QAudioOutput()
         self._media_player = QMediaPlayer()
         self._media_player.setAudioOutput(self._audio_output)
+        self._media_player.errorOccurred.connect(
+            lambda err, msg: self.log_event(f"Audio error ({err}): {msg}")
+        )
 
         # Barcode scanner input accumulator (USB HID scanner types as keyboard)
         self._barcode_buffer = ""
