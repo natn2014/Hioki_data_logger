@@ -170,16 +170,26 @@ class WiFiWorkerThread(QThread):
                 time.sleep(0.1)
 
     def _get_signal(self):
+        import re
+        # Primary: read /proc/net/wireless (available on all Linux/RPi)
+        try:
+            with open('/proc/net/wireless', 'r') as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) >= 3 and parts[0].endswith(':'):
+                        quality = float(parts[2].rstrip('.'))
+                        return min(100, int(quality / 70 * 100))
+        except Exception:
+            pass
+        # Fallback: iwconfig (parses "Link Quality=XX/YY")
         try:
             result = subprocess.run(
-                ['netsh', 'wlan', 'show', 'interfaces'],
-                capture_output=True, text=True, encoding='utf-8', errors='ignore',
-                timeout=3, creationflags=subprocess.CREATE_NO_WINDOW,
+                ['iwconfig'],
+                capture_output=True, text=True, timeout=3,
             )
-            for line in result.stdout.splitlines():
-                s = line.strip()
-                if s.startswith('Signal') and ':' in s:
-                    return int(s.split(':', 1)[1].strip().replace('%', ''))
+            m = re.search(r'Link Quality=(\d+)/(\d+)', result.stdout)
+            if m:
+                return int(int(m.group(1)) / int(m.group(2)) * 100)
         except Exception:
             pass
         return -1
