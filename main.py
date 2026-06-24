@@ -88,7 +88,7 @@ class AutoDetectThread(QThread):
                 time.sleep(0.2)
                 resp = s.read_all().decode(errors="ignore").strip()
                 s.close()
-                if "HIOKI" in resp.upper():
+                if "HIOKI" in resp.upper() or "RM3544-01" in resp.upper():
                     self.found.emit(p.device, resp)
                     return
             except Exception:
