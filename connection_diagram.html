@@ -1,0 +1,573 @@
+<title>Hioki → Server Connection Diagram</title>
+<style>
+  :root {
+    --bg: #eef1f6;
+    --bg-grid: #dde3ee;
+    --surface: #ffffff;
+    --surface-2: #e7ebf3;
+    --ink: #131a29;
+    --ink-dim: #55607a;
+    --ink-faint: #8894ac;
+    --line: #c7d0de;
+    --line-strong: #a8b3c7;
+    --accent: #c8570f;
+    --accent-soft: #f3ddc9;
+    --accent-ink: #ffffff;
+    --data: #0f7a72;
+    --data-soft: #d3ebe8;
+    --shadow: 0 1px 2px rgba(20, 30, 55, 0.06), 0 8px 24px -12px rgba(20, 30, 55, 0.18);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0c111c;
+      --bg-grid: #121927;
+      --surface: #151d2d;
+      --surface-2: #1b2434;
+      --ink: #e9edf6;
+      --ink-dim: #9aa6c0;
+      --ink-faint: #6b7591;
+      --line: #2b3550;
+      --line-strong: #3d4a6b;
+      --accent: #ff9142;
+      --accent-soft: #3a2915;
+      --accent-ink: #17110a;
+      --data: #4fd6c9;
+      --data-soft: #0f2b29;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 28px -14px rgba(0, 0, 0, 0.6);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0c111c;
+    --bg-grid: #121927;
+    --surface: #151d2d;
+    --surface-2: #1b2434;
+    --ink: #e9edf6;
+    --ink-dim: #9aa6c0;
+    --ink-faint: #6b7591;
+    --line: #2b3550;
+    --line-strong: #3d4a6b;
+    --accent: #ff9142;
+    --accent-soft: #3a2915;
+    --accent-ink: #17110a;
+    --data: #4fd6c9;
+    --data-soft: #0f2b29;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 28px -14px rgba(0, 0, 0, 0.6);
+  }
+  :root[data-theme="light"] {
+    --bg: #eef1f6;
+    --bg-grid: #dde3ee;
+    --surface: #ffffff;
+    --surface-2: #e7ebf3;
+    --ink: #131a29;
+    --ink-dim: #55607a;
+    --ink-faint: #8894ac;
+    --line: #c7d0de;
+    --line-strong: #a8b3c7;
+    --accent: #c8570f;
+    --accent-soft: #f3ddc9;
+    --accent-ink: #ffffff;
+    --data: #0f7a72;
+    --data-soft: #d3ebe8;
+    --shadow: 0 1px 2px rgba(20, 30, 55, 0.06), 0 8px 24px -12px rgba(20, 30, 55, 0.18);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background:
+      linear-gradient(var(--bg-grid) 1px, transparent 1px) 0 0 / 100% 28px,
+      linear-gradient(90deg, var(--bg-grid) 1px, transparent 1px) 0 0 / 28px 100%,
+      var(--bg);
+    color: var(--ink);
+    font-family: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+    line-height: 1.5;
+    padding: 40px 24px 64px;
+  }
+
+  h1, h2, h3 {
+    font-family: "Bahnschrift SemiBold", "Bahnschrift", "Segoe UI Semibold", "Segoe UI", Arial, sans-serif;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  .mono {
+    font-family: "Cascadia Mono", "Cascadia Code", Consolas, "SFMono-Regular", ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .page {
+    max-width: 1180px;
+    margin: 0 auto;
+  }
+
+  /* ---------- Header ---------- */
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 24px;
+    flex-wrap: wrap;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 20px;
+    margin-bottom: 36px;
+  }
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 600;
+    margin-bottom: 10px;
+  }
+  .eyebrow::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    background: var(--accent);
+    display: inline-block;
+  }
+  header h1 { font-size: 30px; font-weight: 600; color: var(--ink); }
+  header p.sub { margin: 8px 0 0; color: var(--ink-dim); font-size: 14.5px; max-width: 56ch; }
+  .meta {
+    text-align: right;
+    font-size: 12.5px;
+    color: var(--ink-faint);
+  }
+  .meta .mono { color: var(--ink-dim); }
+
+  /* ---------- Diagram rack ---------- */
+  .rack {
+    overflow-x: auto;
+    padding: 8px 4px 26px;
+    margin: 0 -4px;
+  }
+  .chain {
+    display: flex;
+    align-items: flex-start;
+    gap: 0;
+    min-width: 920px;
+  }
+
+  .node {
+    width: 240px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    padding: 16px 16px 14px;
+    flex-shrink: 0;
+  }
+  .node-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .icon-box {
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .icon-box svg { width: 20px; height: 20px; }
+  .icon-meter  { background: var(--accent-soft); color: var(--accent); }
+  .icon-gateway{ background: var(--surface-2); color: var(--ink-dim); }
+  .icon-server { background: var(--data-soft); color: var(--data); }
+  .icon-local  { background: var(--surface-2); color: var(--ink-faint); }
+
+  .node h3 { font-size: 15px; font-weight: 600; }
+  .node .role { font-size: 11px; color: var(--ink-faint); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 1px; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; margin: 10px 0 8px; }
+  .chip {
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: var(--surface-2);
+    color: var(--ink-dim);
+    border: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  .chip.ref { background: var(--accent-soft); color: var(--accent); border-color: transparent; font-weight: 600; }
+
+  .node ul.spec {
+    list-style: none;
+    margin: 8px 0 0;
+    padding: 0;
+    font-size: 12.5px;
+    color: var(--ink-dim);
+  }
+  .node ul.spec li {
+    padding: 4px 0;
+    border-top: 1px solid var(--line);
+  }
+  .node ul.spec li:first-child { border-top: none; }
+  .node ul.spec b { color: var(--ink); font-weight: 600; }
+
+  .caption {
+    font-size: 12px;
+    color: var(--ink-faint);
+    margin-top: 8px;
+    font-style: italic;
+  }
+
+  /* ---------- Links between nodes ---------- */
+  .link {
+    flex: 0 0 168px;
+    padding-top: 34px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 3px;
+  }
+  .link-label { font-size: 12.5px; font-weight: 600; color: var(--ink); }
+  .link-sub { font-size: 11px; color: var(--ink-faint); max-width: 158px; }
+  .link-sub.mono { font-size: 10.5px; }
+  .link svg { width: 100%; height: 22px; margin: 2px 0; }
+  .link.serial .wire { stroke: var(--accent); }
+  .link.db .wire { stroke: var(--data); }
+  .link .arrowhead { fill: inherit; }
+  .link.serial .arrowhead { fill: var(--accent); }
+  .link.db .arrowhead { fill: var(--data); }
+
+  /* ---------- Gateway column with branch ---------- */
+  .gateway-col { display: flex; flex-direction: column; align-items: center; padding-top: 0; }
+  .branch {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-top: 6px;
+  }
+  .branch svg { width: 24px; height: 26px; }
+  .branch .wire { stroke: var(--ink-faint); stroke-dasharray: 4 3; }
+  .branch-label { font-size: 10.5px; color: var(--ink-faint); margin: 2px 0 4px; }
+  .node-local { width: 200px; }
+
+  /* ---------- Legend ---------- */
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 22px;
+    padding: 14px 18px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    margin-top: 4px;
+    font-size: 12.5px;
+    color: var(--ink-dim);
+  }
+  .legend-item { display: flex; align-items: center; gap: 8px; }
+  .legend-item svg { width: 30px; height: 10px; flex-shrink: 0; }
+
+  /* ---------- Specs section ---------- */
+  .specs {
+    margin-top: 40px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 18px;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    padding: 20px 22px;
+  }
+  .card h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--ink-dim);
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .card h2 .dot { width: 8px; height: 8px; border-radius: 2px; }
+  .card.serial h2 .dot { background: var(--accent); }
+  .card.db h2 .dot { background: var(--data); }
+  .card.ops h2 .dot { background: var(--ink-faint); }
+
+  dl.kv { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 7px 14px; font-size: 13px; }
+  dl.kv dt { color: var(--ink-faint); }
+  dl.kv dd { margin: 0; color: var(--ink); font-weight: 500; }
+
+  table.schema {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12.5px;
+    margin-top: 4px;
+  }
+  table.schema th, table.schema td {
+    text-align: left;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--line);
+  }
+  table.schema th { color: var(--ink-faint); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+  table.schema td { color: var(--ink-dim); }
+  table.schema td.col { color: var(--ink); font-weight: 500; }
+
+  .ops-list { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+  .ops-list li {
+    padding: 8px 0;
+    border-top: 1px solid var(--line);
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    align-items: baseline;
+  }
+  .ops-list li:first-child { border-top: none; }
+  .ops-list .name { color: var(--ink); font-weight: 500; }
+  .ops-list .desc { color: var(--ink-faint); font-size: 12px; text-align: right; }
+
+  footer {
+    margin-top: 36px;
+    padding-top: 16px;
+    border-top: 1px solid var(--line);
+    font-size: 11.5px;
+    color: var(--ink-faint);
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  @media (max-width: 720px) {
+    header { flex-direction: column; align-items: flex-start; }
+    .meta { text-align: left; }
+  }
+</style>
+
+<div class="page">
+
+  <header>
+    <div>
+      <div class="eyebrow">Hioki Data Logger</div>
+      <h1>Meter-to-server connection diagram</h1>
+      <p class="sub">Signal path from the bench resistance meter through the gateway application to the factory database, including the local fallback path used when the database link is down.</p>
+    </div>
+    <div class="meta">
+      <div>System architecture reference</div>
+      <div class="mono">generated 2026-07-09</div>
+    </div>
+  </header>
+
+  <div class="rack">
+    <div class="chain">
+
+      <!-- NODE 1: METER -->
+      <div class="node">
+        <div class="node-head">
+          <div class="icon-box icon-meter">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="13" r="8.5"/>
+              <line x1="12" y1="13" x2="15.5" y2="8.5"/>
+              <circle cx="12" cy="13" r="1.1" fill="currentColor" stroke="none"/>
+              <line x1="12" y1="5.3" x2="12" y2="7"/>
+              <line x1="19.3" y1="13" x2="17.6" y2="13"/>
+              <line x1="4.7" y1="13" x2="6.4" y2="13"/>
+            </svg>
+          </div>
+          <div>
+            <h3>HIOKI resistance meter</h3>
+            <div class="role">Bench instrument</div>
+          </div>
+        </div>
+        <div class="chips">
+          <span class="chip ref">RM3544-01</span>
+          <span class="chip">RM3545</span>
+          <span class="chip">RM3542</span>
+          <span class="chip">DM7276</span>
+          <span class="chip">DM7275</span>
+          <span class="chip">IM7580A</span>
+        </div>
+        <ul class="spec">
+          <li><b>Identifies via</b> <span class="mono">*IDN?</span> → matched on "HIOKI"</li>
+          <li><b>Judgement cmds</b> RM3544-01 uses <span class="mono">JUDGE:LEVEL</span></li>
+        </ul>
+      </div>
+
+      <!-- LINK 1: SERIAL -->
+      <div class="link serial">
+        <div class="link-label">USB / RS-232</div>
+        <svg viewBox="0 0 168 22" preserveAspectRatio="none">
+          <line class="wire" x1="2" y1="11" x2="150" y2="11" stroke-width="2"/>
+          <polygon class="arrowhead" points="150,4 164,11 150,18"/>
+        </svg>
+        <div class="link-sub mono">SCPI · 9600 baud</div>
+        <div class="link-sub">FETC? every 500 ms · *IDN? heartbeat / 30 s</div>
+      </div>
+
+      <!-- NODE 2: GATEWAY (with branch) -->
+      <div class="gateway-col">
+        <div class="node" style="width:260px;">
+          <div class="node-head">
+            <div class="icon-box icon-gateway">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3.5" y="4" width="17" height="12" rx="1.4"/>
+                <line x1="8" y1="20" x2="16" y2="20"/>
+                <line x1="12" y1="16" x2="12" y2="20"/>
+                <line x1="7" y1="8" x2="12" y2="8"/>
+                <line x1="7" y1="11" x2="10.5" y2="11"/>
+              </svg>
+            </div>
+            <div>
+              <h3>Gateway app — main.py</h3>
+              <div class="role">PySide6 · PC / Raspberry Pi</div>
+            </div>
+          </div>
+          <ul class="spec">
+            <li><b>Usb_rs</b> serial wrapper (open / send / receive)</li>
+            <li><b>AutoDetectThread</b> scans COM ports for a HIOKI reply</li>
+            <li><b>PollWorkerThread</b> polls measurements, writes CSV</li>
+            <li><b>WiFiWorkerThread</b> tracks signal / link status</li>
+          </ul>
+          <div class="chips" style="margin-top:10px;">
+            <span class="chip">hioki-app.service</span>
+            <span class="chip">hioki-watchdog.service</span>
+          </div>
+        </div>
+
+        <div class="branch">
+          <svg viewBox="0 0 24 26" preserveAspectRatio="none">
+            <line class="wire" x1="12" y1="0" x2="12" y2="18" stroke-width="2"/>
+            <polygon fill="var(--ink-faint)" points="6,18 12,26 18,18"/>
+          </svg>
+          <div class="branch-label">local fallback</div>
+        </div>
+
+        <div class="node node-local">
+          <div class="node-head">
+            <div class="icon-box icon-local">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M6 3.5h8l4 4v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-16a1 1 0 0 1 1-1z"/>
+                <path d="M14 3.5v4h4"/>
+              </svg>
+            </div>
+            <div>
+              <h3 style="font-size:13.5px;">Local disk buffer</h3>
+              <div class="role">Survives DB outages</div>
+            </div>
+          </div>
+          <ul class="spec">
+            <li><span class="mono">YYYYMMDD.csv</span> daily log</li>
+            <li><span class="mono">pending_uploads.json</span> retry queue</li>
+            <li><span class="mono">model_changes.csv</span> audit trail</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- LINK 2: DB -->
+      <div class="link db">
+        <div class="link-label">pyodbc</div>
+        <svg viewBox="0 0 168 22" preserveAspectRatio="none">
+          <line class="wire" x1="2" y1="11" x2="150" y2="11" stroke-width="2"/>
+          <polygon class="arrowhead" points="150,4 164,11 150,18"/>
+        </svg>
+        <div class="link-sub mono">ODBC Driver 18 · TLS</div>
+        <div class="link-sub">Retries 10s → 300s backoff when unreachable</div>
+      </div>
+
+      <!-- NODE 3: SERVER -->
+      <div class="node">
+        <div class="node-head">
+          <div class="icon-box icon-server">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <ellipse cx="12" cy="5.5" rx="7.5" ry="2.6"/>
+              <path d="M4.5 5.5v13c0 1.4 3.4 2.6 7.5 2.6s7.5-1.2 7.5-2.6v-13"/>
+              <path d="M4.5 12c0 1.4 3.4 2.6 7.5 2.6s7.5-1.2 7.5-2.6"/>
+            </svg>
+          </div>
+          <div>
+            <h3>SQL Server</h3>
+            <div class="role">Factory database</div>
+          </div>
+        </div>
+        <ul class="spec">
+          <li><b>Host</b> <span class="mono">172.18.72.16</span></li>
+          <li><b>Database</b> <span class="mono">ENGINEER_DB</span></li>
+          <li><b>Table</b> <span class="mono">resistance</span></li>
+        </ul>
+        <div class="caption">Written to by every gateway on the line</div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="legend">
+    <div class="legend-item">
+      <svg viewBox="0 0 30 10"><line x1="1" y1="5" x2="29" y2="5" stroke="var(--accent)" stroke-width="2.4"/></svg>
+      Live serial telemetry (primary)
+    </div>
+    <div class="legend-item">
+      <svg viewBox="0 0 30 10"><line x1="1" y1="5" x2="29" y2="5" stroke="var(--data)" stroke-width="2.4"/></svg>
+      Database write path (primary)
+    </div>
+    <div class="legend-item">
+      <svg viewBox="0 0 30 10"><line x1="1" y1="5" x2="29" y2="5" stroke="var(--ink-faint)" stroke-width="2.4" stroke-dasharray="4 3"/></svg>
+      Local fallback / buffer path
+    </div>
+  </div>
+
+  <div class="specs">
+    <div class="card serial">
+      <h2><span class="dot"></span>Serial link specification</h2>
+      <dl class="kv">
+        <dt>Interface</dt><dd>USB or RS-232, appears as a COM / tty port</dd>
+        <dt>Baud rate</dt><dd class="mono">9600</dd>
+        <dt>Line terminator</dt><dd class="mono">\r\n</dd>
+        <dt>Discovery</dt><dd class="mono">*IDN?</dd>
+        <dt>Continuous mode</dt><dd class="mono">:INITIATE:CONTINUOUS ON</dd>
+        <dt>Trigger</dt><dd class="mono">:TRIGGER:SOURCE IMM</dd>
+        <dt>Measurement fetch</dt><dd class="mono">FETC?</dd>
+      </dl>
+    </div>
+
+    <div class="card db">
+      <h2><span class="dot"></span>Database link specification</h2>
+      <dl class="kv">
+        <dt>Driver</dt><dd class="mono">ODBC Driver 18 for SQL Server</dd>
+        <dt>Server</dt><dd class="mono">172.18.72.16</dd>
+        <dt>Database</dt><dd class="mono">ENGINEER_DB</dd>
+        <dt>User</dt><dd class="mono">engineering_user</dd>
+        <dt>Password</dt><dd class="mono">••••••••••</dd>
+        <dt>Transport</dt><dd>Encrypt=yes, TrustServerCertificate=yes</dd>
+      </dl>
+      <table class="schema">
+        <thead><tr><th>resistance</th><th>type</th></tr></thead>
+        <tbody>
+          <tr><td class="col">Timestamp</td><td>datetime</td></tr>
+          <tr><td class="col">Resistance</td><td>numeric</td></tr>
+          <tr><td class="col">Status</td><td>OK / NG / N/A</td></tr>
+          <tr><td class="col">Model</td><td>varchar</td></tr>
+          <tr><td class="col">Date, Time</td><td>split fields</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card ops">
+      <h2><span class="dot"></span>Process supervision</h2>
+      <ul class="ops-list">
+        <li><span class="name mono">hioki-app.service</span><span class="desc">runs main.py as user pi, waits for X11, auto-restarts</span></li>
+        <li><span class="name mono">hioki-watchdog.service</span><span class="desc">kills main.py if it hangs in D-state 30s+</span></li>
+        <li><span class="name mono">setup_services.sh</span><span class="desc">installs venv, ODBC driver 18, systemd units</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <footer>
+    <span>Hioki_data_logger — connection_diagram.html</span>
+    <span class="mono">meter → main.py → ENGINEER_DB.dbo.resistance</span>
+  </footer>
+
+</div>
