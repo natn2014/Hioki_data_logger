@@ -18,7 +18,7 @@ from datetime import datetime
 from PySide6.QtCore import QTimer, QThread, Signal, Qt, QStringListModel, QEvent, QUrl
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QMessageBox, QInputDialog, QAbstractSpinBox,
+    QApplication, QDialog, QMessageBox, QAbstractSpinBox,
     QPushButton, QHBoxLayout, QVBoxLayout, QLabel, QLineEdit, QDoubleSpinBox,
     QScrollArea, QWidget
 )
@@ -29,6 +29,7 @@ from insert_resistance2db import (
 )
 from ui_UI_Resistance import Ui_Dialog
 from numpad_dialog import NumpadDialog
+from keyboard_dialog import KeyboardDialog
 from db_upload_manager import DBUploadManager, UploadSignals, SpecQueueManager
 
 BAUD_RATE = 9600
@@ -353,10 +354,24 @@ class ModelSpecDialog(QDialog):
                 if source is rec["upper"].lineEdit():
                     self._numpad(rec["upper"], "Upper Ω")
                     return True
+            if source in self._scan_fields:
+                self._keyboard(source)
+                return True
         elif et == QEvent.Type.FocusIn and source in self._scan_fields:
             # Select existing text so a scan (or retype) replaces it cleanly.
             source.selectAll()
         return super().eventFilter(source, event)
+
+    def _keyboard(self, line_edit):
+        """Tap a text field → on-screen keyboard (scanner input works too)."""
+        title = "Model name" if line_edit is self.model_edit else "Point name"
+        dlg = KeyboardDialog(
+            current_text=line_edit.text(), title=title,
+            max_length=line_edit.maxLength(), parent=self,
+        )
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            # Cleanse here too: the scanner may have typed into the keyboard.
+            line_edit.setText(decode_model_text(dlg.get_text()))
 
     def _numpad(self, spinbox, title):
         dlg = NumpadDialog(
@@ -922,9 +937,17 @@ class MainWindow(QDialog):
         """Cleanse barcode / manual-entry text (delegates to decode_model_text)."""
         return decode_model_text(raw)
 
+    def _prompt_model_text(self, preset=""):
+        """On-screen keyboard prompt for a model name. Returns (text, ok)."""
+        dlg = KeyboardDialog(current_text=preset, title="Model name",
+                             max_length=100, parent=self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            return dlg.get_text(), True
+        return "", False
+
     def on_model_clicked(self):
         """Prompt user for model, clean it, show on button, and load its limits."""
-        text, ok = QInputDialog.getText(self, "Model", "Enter model text:", text=self.cleaned_model)
+        text, ok = self._prompt_model_text(self.cleaned_model)
         if ok:
             old_model = self.cleaned_model
             cleaned = self._decode_model_text(text)
@@ -1510,7 +1533,7 @@ class MainWindow(QDialog):
 
             # Ensure model is set; if empty, prompt once at record time
             if not cleaned_model:
-                text, ok = QInputDialog.getText(self, "Model", "Enter model text:")
+                text, ok = self._prompt_model_text()
                 if ok:
                     cleaned_model = self._decode_model_text(text)
                     self.log_model_change("CHANGE", "", cleaned_model, "prompt")

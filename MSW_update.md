@@ -174,6 +174,15 @@ Operators create or edit a model's point sequence from the QC screen — no dire
 - The dialog is a touch-friendly editor: model-name field + one row per point
   (`Seq · PointName · Lower · Upper · remove`), an **＋ Add point** button, and the numeric
   limits open the on-screen `NumpadDialog` on tap. Seq auto-renumbers.
+- **Tapping a text field opens an on-screen keyboard** (`keyboard_dialog.py` →
+  `KeyboardDialog`), the text-side companion to `NumpadDialog`: a QWERTY grid with digits,
+  the symbols model names need (`- _ ( ) . / + # &`), Shift for lower-case, Backspace, Clear,
+  Space, Cancel/OK. Numeric limit fields still open the numpad instead.
+  The same keyboard replaces the old `QInputDialog` behind the main **Model** button and the
+  record-time model prompt, so no desktop text box is ever shown on the touch panel.
+- The keyboard's display is a real `QLineEdit`, so a **barcode scan works inside it** too —
+  the scanner types the code and its trailing Enter accepts the dialog. Whatever is entered
+  (typed or scanned) is passed through `decode_model_text()` on the way back.
 - The **model-name and point-name fields accept the barcode scanner**: scanned input is
   cleansed with the shared `decode_model_text()` (AIM Code 39 Extended via `AIM_MAP`, plus the
   `$`-delimited label-printer format) — the same routine the main screen uses. The field
