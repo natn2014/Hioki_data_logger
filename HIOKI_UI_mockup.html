@@ -205,7 +205,7 @@
   @keyframes flash { 0%{ transform: scale(1);} 40%{ transform: scale(1.015);} 100%{ transform: scale(1);} }
   .judge.flash { animation: flash .35s ease; }
 
-  .btn-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .btn-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
   .obtn {
     font-family: var(--sans); font-size: 15px; font-weight: 600; cursor: pointer;
     padding: 12px; border-radius: 10px; color: var(--ink);
@@ -329,6 +329,12 @@
   .reg-msg { min-height: 18px; font-size: 12.5px; margin-top: 12px; font-family: var(--mono); }
   .reg-msg.err { color: var(--fail); }
   .reg-msg.ok { color: var(--pass); }
+  .reg-msg.warn { color: var(--warn); }
+  .qbadge {
+    margin-left: auto; font-family: var(--mono); font-size: 11px; font-weight: 700;
+    color: var(--bg); background: var(--ink-faint); border-radius: 999px; padding: 1px 8px;
+  }
+  .qbadge.has { background: var(--warn); }
   .reg-actions { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
   .primary-btn {
     flex: 1; min-width: 180px; font-family: var(--sans); font-size: 15px; font-weight: 700; cursor: pointer; color: #04121a;
@@ -419,6 +425,7 @@
 
       <div class="btn-row">
         <button class="obtn" id="btnReset" type="button">⟲ Reset to first point</button>
+        <button class="obtn" id="btnNewModel" type="button">＋ New Model</button>
         <button class="obtn" id="btnEditSpec" type="button">⚙ Edit Spec</button>
       </div>
 
@@ -521,6 +528,15 @@
         </div>
 
         <div class="block">
+          <h2><span class="tag">CSV</span> Offline queue · pending_specs.csv
+            <span class="qbadge" id="specQueueCount">0</span></h2>
+          <pre class="sql-pre" id="specQueuePre"></pre>
+          <p class="hint">Turn <b>Database uplink</b> off, then save a spec: it lands here
+            instead of the DB and uploads automatically when the server returns —
+            the same queue-and-retry the readings use.</p>
+        </div>
+
+        <div class="block">
           <h2><span class="tag">DB</span> Write result</h2>
           <div class="feed" id="regLog"></div>
           <p class="hint">The confirm re-writes this model's rows: <code>DELETE</code> the old
@@ -563,7 +579,8 @@
   var state = {
     running: false, usb: true, db: true, forceFail: false,
     idx: 0, phase: "idle", phaseTick: 0, target: null, shown: null,
-    rows: 0, queue: 0, readings: 0, results: {}, chipsSig: null
+    rows: 0, queue: 0, readings: 0, results: {}, chipsSig: null,
+    specQueue: {}   // simulated pending_specs.csv — {model: [points]}
   };
 
   // ── Small helpers ─────────────────────────────────────────────────────────
@@ -796,6 +813,7 @@
       s.innerHTML = '<span class="wifi-bars">▂▄▆█</span> 82%';
       dbFeed('<span class="g">connect OK</span> <span class="d">ENGINEER_DB @ 172.18.72.16</span>');
       flushQueue();
+      flushSpecQueue();   // queued specs ride the same reconnect
     } else {
       s.className = "v st-warn";
       s.innerHTML = '<span class="wifi-bars">▂▄░░</span> down';
@@ -818,6 +836,13 @@
 
   $("btnReset").addEventListener("click", function () {
     state.idx = 0; state.results = {}; applyPoint(); setJudge(null); resetPhase();
+  });
+
+  // New Model jumps to the Register tab with a blank form.
+  $("btnNewModel").addEventListener("click", function () {
+    clearReg();
+    showTab("reg");
+    $("regModel").focus();
   });
 
   // Edit Spec jumps to the Register tab, prefilled with the active model.
@@ -972,7 +997,25 @@
       return { name: r.name, lower: +parseFloat(r.lower).toFixed(3), upper: +parseFloat(r.upper).toFixed(3) };
     });
     var existed = registry.hasOwnProperty(model);
+    // The spec is valid, so adopt it locally either way — the operator can
+    // measure with it immediately, even if the DB write has to wait.
     registry[model] = points;
+    loadModel(model);
+    $("regGo").hidden = false;
+
+    if (!state.db) {
+      // Server down: queue to pending_specs.csv instead of writing (replaces
+      // any earlier queued version of this model).
+      state.specQueue[model] = points;
+      renderSpecQueue();
+      var n = Object.keys(state.specQueue).length;
+      regLog('<span class="r">⚠ server down</span> — spec queued to pending_specs.csv ' +
+        '<span class="d">(' + n + ' model(s) pending)</span>');
+      msg.className = "reg-msg warn";
+      msg.textContent = "⚠ DB unreachable — spec for '" + model + "' saved to pending_specs.csv " +
+        "and is active on this device. It will upload automatically when the server is back.";
+      return;
+    }
 
     // Simulate the resistance_spec upsert.
     regLog('<span class="a">↑ BEGIN</span> ENGINEER_DB @ 172.18.72.16 <span class="d">(' + now() + ')</span>');
@@ -986,8 +1029,46 @@
     msg.className = "reg-msg ok";
     msg.textContent = "✓ Saved " + points.length + " point(s) to resistance_spec for '" + model + "' " +
       (existed ? "(updated existing model)." : "(new model).");
-    var go = $("regGo"); go.hidden = false;
-    loadModel(model);  // make it the active QC model immediately
+  }
+
+  // ── Simulated pending_specs.csv ───────────────────────────────────────────
+  function renderSpecQueue() {
+    var models = Object.keys(state.specQueue);
+    var badge = $("specQueueCount");
+    badge.textContent = models.length;
+    badge.className = "qbadge" + (models.length ? " has" : "");
+    var pre = $("specQueuePre");
+    if (!models.length) {
+      pre.innerHTML = '<span class="d">— empty — every spec is in the database —</span>';
+      return;
+    }
+    var stamp = new Date().toISOString().slice(0, 19);
+    var lines = ["QueuedAt,Model,Seq,PointName,LowerLimit,UpperLimit"];
+    models.forEach(function (m) {
+      state.specQueue[m].forEach(function (p, i) {
+        lines.push([stamp, m, i + 1, p.name, fmt(p.lower), fmt(p.upper)].join(","));
+      });
+    });
+    pre.textContent = lines.join("\n");  // textContent — names are user input
+  }
+
+  function flushSpecQueue() {
+    if (!Object.keys(state.specQueue).length) { return; }
+    regLog('<span class="a">server reachable</span> — flushing ' +
+      Object.keys(state.specQueue).length + ' queued spec(s)…');
+    var step = function () {
+      var keys = Object.keys(state.specQueue);
+      if (!state.db || !keys.length) { renderSpecQueue(); return; }
+      var m = keys[0];
+      var rows = state.specQueue[m].length;
+      delete state.specQueue[m];
+      renderSpecQueue();
+      var left = Object.keys(state.specQueue).length;
+      regLog('<span class="g">✓ flushed</span> resistance_spec ← ' + esc(m) +
+        ' <span class="d">(' + rows + ' row(s) · ' + left + ' left)</span>');
+      if (left) { setTimeout(step, 320); }
+    };
+    setTimeout(step, 320);
   }
   function clearReg() {
     $("regModel").value = "";
@@ -1014,6 +1095,7 @@
   // Register tab starts with one blank point row and an empty seed value.
   addPtRow("A-B", "", "");
   refreshReg();
+  renderSpecQueue();
   regLog('<span class="g">ready</span> <span class="d">— resistance_spec (Model, Seq, PointName, LowerLimit, UpperLimit)</span>');
 })();
 </script>

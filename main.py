@@ -29,7 +29,7 @@ from insert_resistance2db import (
 )
 from ui_UI_Resistance import Ui_Dialog
 from numpad_dialog import NumpadDialog
-from db_upload_manager import DBUploadManager, UploadSignals
+from db_upload_manager import DBUploadManager, UploadSignals, SpecQueueManager
 
 BAUD_RATE = 9600
 POLL_INTERVAL_MS = 500  # default polling interval for FETC?
@@ -178,8 +178,8 @@ class SpecFetchThread(QThread):
 
 class SpecUpsertThread(QThread):
     """Writes a model's point sequence to resistance_spec off the main thread."""
-    done   = Signal(str, int)   # model, rows_written
-    failed = Signal(str, str)   # model, error
+    done   = Signal(str, int)         # model, rows_written
+    failed = Signal(str, str, bool)   # model, error, queueable
 
     def __init__(self, model, points):
         super().__init__()
@@ -190,8 +190,12 @@ class SpecUpsertThread(QThread):
         try:
             count = upsert_model_spec(self.model, self.points)
             self.done.emit(self.model, count)
+        except ValueError as e:
+            # Bad data — retrying can never help, so never queue it.
+            self.failed.emit(self.model, str(e), False)
         except Exception as e:
-            self.failed.emit(self.model, str(e))
+            # Connection / query failure — queue it and retry later.
+            self.failed.emit(self.model, str(e), True)
 
 
 class SchemaCheckThread(QThread):
@@ -507,7 +511,11 @@ class MainWindow(QDialog):
         self.upload_signals.upload_complete.connect(self.on_upload_complete, Qt.ConnectionType.QueuedConnection)
         self.upload_signals.retry_complete.connect(self.on_retry_complete, Qt.ConnectionType.QueuedConnection)
 
+        self.upload_signals.spec_flush_complete.connect(
+            self.on_spec_flush_complete, Qt.ConnectionType.QueuedConnection)
+
         self.db_manager = DBUploadManager(parent_signals=self.upload_signals)
+        self.spec_queue = SpecQueueManager(parent_signals=self.upload_signals)
         self.connected = False
         self.current_port = None
         self.detect_in_progress = False
@@ -613,12 +621,14 @@ class MainWindow(QDialog):
         # stays untouched). Reset needs an active sequence; Edit Spec never does.
         self.point_button_row = QHBoxLayout()
         self.btn_reset_point = QPushButton("⟲ Reset to first point")
+        self.btn_new_model = QPushButton("＋ New Model")
         self.btn_edit_spec = QPushButton("⚙ Edit Spec")
-        for b in (self.btn_reset_point, self.btn_edit_spec):
+        for b in (self.btn_reset_point, self.btn_new_model, self.btn_edit_spec):
             b.setMinimumHeight(48)
             self.point_button_row.addWidget(b)
         self.ui.groupBox_Judge.layout().addLayout(self.point_button_row)
         self.btn_reset_point.clicked.connect(self.on_reset_point)
+        self.btn_new_model.clicked.connect(self.on_new_model_clicked)
         self.btn_edit_spec.clicked.connect(self.on_edit_spec_clicked)
         self._apply_point_to_ui()  # builds cards + sets initial enabled state
 
@@ -627,6 +637,11 @@ class MainWindow(QDialog):
         if pending_count > 0:
             self.log_event(f"Found {pending_count} pending uploads to retry")
             self.append_log(f"! {pending_count} value(s) waiting to upload")
+
+        pending_specs = self.spec_queue.pending_count()
+        if pending_specs > 0:
+            self.log_event(f"Found {pending_specs} pending spec(s) to upload")
+            self.append_log(f"! {pending_specs} model spec(s) waiting to upload")
 
         # Initialise status badges and start background WiFi monitor
         self._set_usb_status("disconnected")
@@ -1105,11 +1120,19 @@ class MainWindow(QDialog):
 
     # ── Register / edit a model spec (writes resistance_spec) ─────────────────
 
+    def on_new_model_clicked(self):
+        """Open a blank spec editor to register a brand-new model."""
+        self._open_spec_dialog(model="", points=None, title_hint="new model")
+
     def on_edit_spec_clicked(self):
-        """Open the spec editor prefilled with the current model, then save."""
+        """Open the spec editor prefilled with the current model."""
         model = self.cleaned_model.strip()
         points = [{"name": p["name"], "lower": p["lower"], "upper": p["upper"]}
                   for p in self.spec_points]
+        self._open_spec_dialog(model=model, points=points, title_hint="edit spec")
+
+    def _open_spec_dialog(self, model, points, title_hint):
+        """Shared entry for both New Model and Edit Spec."""
         dlg = ModelSpecDialog(model=model, points=points, parent=self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
@@ -1117,41 +1140,47 @@ class MainWindow(QDialog):
         if not result:
             return
         new_model, new_points = result
+        self.log_event(f"Spec dialog accepted ({title_hint}): "
+                       f"{new_model} ({len(new_points)} points)")
+        self._start_spec_save(new_model, new_points)
 
-        self._pending_spec = (new_model, new_points)
-        self.btn_edit_spec.setEnabled(False)
-        self.append_log(f"Saving spec: {new_model} ({len(new_points)} points)...")
-        self.spec_upsert_thread = SpecUpsertThread(new_model, new_points)
+    def _start_spec_save(self, model, points):
+        """Write a spec to resistance_spec off-thread; queue it if the DB is down."""
+        self._pending_spec = (model, points)
+        self._set_spec_buttons_enabled(False)
+        self.append_log(f"Saving spec: {model} ({len(points)} points)...")
+        self.spec_upsert_thread = SpecUpsertThread(model, points)
         self.spec_upsert_thread.done.connect(
             self.on_spec_saved, Qt.ConnectionType.QueuedConnection)
         self.spec_upsert_thread.failed.connect(
             self.on_spec_save_failed, Qt.ConnectionType.QueuedConnection)
         self.spec_upsert_thread.start()
 
-    def on_spec_saved(self, model, count):
-        """resistance_spec write succeeded — cache, then apply/offer switch."""
-        self.btn_edit_spec.setEnabled(True)
-        pending = self._pending_spec
-        self._pending_spec = None
-        raw = pending[1] if (pending and pending[0] == model) else []
-        norm = [{"seq": i + 1, "name": p["name"],
+    def _set_spec_buttons_enabled(self, enabled):
+        self.btn_edit_spec.setEnabled(enabled)
+        self.btn_new_model.setEnabled(enabled)
+
+    def _normalise_points(self, points):
+        return [{"seq": i + 1, "name": p["name"],
                  "lower": float(p["lower"]), "upper": float(p["upper"])}
-                for i, p in enumerate(raw)]
+                for i, p in enumerate(points)]
+
+    def _adopt_spec(self, model, norm):
+        """Cache the spec locally and apply it (or offer to switch to it).
+
+        Runs whether the DB write succeeded or was queued — the spec is valid
+        either way, so the operator can measure with it immediately.
+        """
         if norm:
             self._cache_points(model, norm)
-        self.log_event(f"Spec saved to DB for '{model}' ({count} points)")
-        self.append_log(f"✓ Spec saved: {model} ({count} points)")
-
         if model == self.cleaned_model.strip():
-            # Refresh the active model's sequence in place.
             self.spec_points = norm
             self.current_point_index = 0
             self._apply_point_to_ui()
             return
-
         resp = QMessageBox.question(
             self, "Spec saved",
-            f"Saved spec for '{model}'.\nSwitch to this model now?",
+            f"Spec for '{model}' is ready.\nSwitch to this model now?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if resp == QMessageBox.StandardButton.Yes:
@@ -1163,16 +1192,60 @@ class MainWindow(QDialog):
             self.save_config()
             self.log_model_change("CHANGE", old, model, "spec_editor")
 
-    def on_spec_save_failed(self, model, err):
-        """resistance_spec write failed — surface the error, keep the button live."""
-        self.btn_edit_spec.setEnabled(True)
+    def on_spec_saved(self, model, count):
+        """resistance_spec write succeeded — cache, apply, then flush any backlog."""
+        self._set_spec_buttons_enabled(True)
+        pending = self._pending_spec
         self._pending_spec = None
-        self.log_event(f"Spec save failed for '{model}': {err}")
-        self.append_log(f"! Spec save failed: {err}")
-        QMessageBox.critical(
-            self, "Spec save failed",
-            f"Could not write resistance_spec for '{model}':\n{err}",
+        raw = pending[1] if (pending and pending[0] == model) else []
+        norm = self._normalise_points(raw)
+
+        self.log_event(f"Spec saved to DB for '{model}' ({count} points)")
+        self.append_log(f"✓ Spec saved: {model} ({count} points)")
+        self._adopt_spec(model, norm)
+
+        # Server just proved reachable — push any specs queued while it was down.
+        if self.spec_queue.pending_count() > 0:
+            self.spec_queue.flush_async()
+
+    def on_spec_save_failed(self, model, err, queueable):
+        """Write failed. Queue it like a reading upload, or reject bad data."""
+        self._set_spec_buttons_enabled(True)
+        pending = self._pending_spec
+        self._pending_spec = None
+
+        if not queueable:
+            # Validation error — retrying can never help.
+            self.log_event(f"Spec rejected for '{model}': {err}")
+            self.append_log(f"! Spec rejected: {err}")
+            QMessageBox.critical(
+                self, "Spec rejected",
+                f"The spec for '{model}' is not valid:\n{err}",
+            )
+            return
+
+        raw = pending[1] if (pending and pending[0] == model) else []
+        count = self.spec_queue.queue_spec(model, raw)
+        self.log_event(f"Spec queued offline for '{model}': {err}")
+        self.append_log(f"! DB unreachable — spec for {model} queued "
+                        f"({count} pending, will upload automatically)")
+        # The spec is valid, so use it locally right away.
+        self._adopt_spec(model, self._normalise_points(raw))
+        QMessageBox.information(
+            self, "Spec queued",
+            f"The database is unreachable, so the spec for '{model}' was saved "
+            f"locally to {SpecQueueManager.PENDING_FILE}.\n\n"
+            f"It is active on this device now and will upload automatically "
+            f"when the server is back.",
         )
+
+    def on_spec_flush_complete(self, flushed, remaining):
+        """A queued spec batch reached the DB."""
+        self.log_event(f"Spec queue flushed: {flushed} model(s), {remaining} remaining")
+        if remaining:
+            self.append_log(f"Spec queue: {flushed} uploaded, {remaining} still pending")
+        else:
+            self.append_log(f"✓ Spec queue empty — {flushed} model(s) uploaded")
 
     # ── Startup schema guard (optional, non-fatal) ────────────────────────────
 
@@ -1509,6 +1582,9 @@ class MainWindow(QDialog):
                 self.log_event(f"Server reachable — flushing {pending} queued record(s)")
                 self.append_log(f"Server back — uploading {pending} queued record(s)...")
                 self.db_manager.retry_pending_uploads()
+            # ...and any specs queued while the server was down.
+            if self.spec_queue.pending_count() > 0:
+                self.spec_queue.flush_async()
         else:
             self.log_event(f"Database upload failed: {error_msg}")
             count, wait, _ = self.db_manager.get_queue_status()
@@ -1523,6 +1599,9 @@ class MainWindow(QDialog):
         if count > 0 and self.db_manager.should_retry_now():
             self.log_event(f"Backoff elapsed — attempting batch upload of {count} pending record(s)")
             self.db_manager.retry_pending_uploads()
+        # Queued specs ride the same retry window as queued readings.
+        if self.db_manager.should_retry_now() and self.spec_queue.pending_count() > 0:
+            self.spec_queue.flush_async()
 
     def on_retry_complete(self, success_count, failed_count, remaining_count):
         """Callback when a batch retry finishes (runs on main thread)."""

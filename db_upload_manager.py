@@ -1,18 +1,21 @@
 # coding: UTF-8
 """Database upload manager — queue on failure, batch-flush on reconnect."""
 
+import csv
 import json
 import os
 import time
+from collections import OrderedDict
 from datetime import datetime
 from threading import Thread, Lock
 from PySide6.QtCore import Signal, QObject
-from insert_resistance2db import insert_to_mssql
+from insert_resistance2db import insert_to_mssql, upsert_model_spec
 
 
 class UploadSignals(QObject):
     upload_complete = Signal(bool, str)      # (success, error_msg)
     retry_complete  = Signal(int, int, int)  # (success_count, failed_count, remaining)
+    spec_flush_complete = Signal(int, int)   # (models_flushed, models_remaining)
 
 
 class DBUploadManager:
@@ -236,3 +239,137 @@ class DBUploadManager:
                 self.is_uploading = False
 
         Thread(target=retry_worker, daemon=True).start()
+
+
+class SpecQueueManager:
+    """Offline queue for resistance_spec writes — the spec-side twin of
+    DBUploadManager.
+
+    A spec is many rows (one per point), so the queue is a CSV holding every
+    pending model's points. Re-queuing a model *replaces* its rows: the DB write
+    is an idempotent DELETE+INSERT, so only the newest version matters and stale
+    versions must never be replayed.
+    """
+    PENDING_FILE   = "pending_specs.csv"
+    HEADERS        = ["QueuedAt", "Model", "Seq", "PointName", "LowerLimit", "UpperLimit"]
+    UPLOAD_TIMEOUT = 5
+
+    def __init__(self, parent_signals=None):
+        self.parent_signals = parent_signals
+        self.lock = Lock()
+        self.is_flushing = False
+        self.path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), self.PENDING_FILE)
+
+    # ── Persistence ───────────────────────────────────────────────────────────
+
+    def _read(self):
+        """Return OrderedDict {model: [{seq, name, lower, upper}, ...]}."""
+        specs = OrderedDict()
+        if not os.path.exists(self.path):
+            return specs
+        try:
+            with open(self.path, newline="", encoding="utf-8") as f:
+                for row in csv.DictReader(f):
+                    model = (row.get("Model") or "").strip()
+                    if not model:
+                        continue
+                    try:
+                        point = {
+                            "seq":   int(row["Seq"]),
+                            "name":  row["PointName"],
+                            "lower": float(row["LowerLimit"]),
+                            "upper": float(row["UpperLimit"]),
+                        }
+                    except (KeyError, TypeError, ValueError):
+                        continue  # skip malformed row rather than lose the file
+                    specs.setdefault(model, []).append(point)
+            for pts in specs.values():
+                pts.sort(key=lambda p: p["seq"])
+        except Exception as e:
+            print(f"[SpecQueue] Error reading {self.PENDING_FILE}: {e}")
+        return specs
+
+    def _write(self, specs):
+        try:
+            stamp = datetime.now().isoformat(timespec="seconds")
+            with open(self.path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(self.HEADERS)
+                for model, pts in specs.items():
+                    for i, p in enumerate(pts, start=1):
+                        writer.writerow([stamp, model, p.get("seq", i),
+                                         p["name"], p["lower"], p["upper"]])
+        except Exception as e:
+            print(f"[SpecQueue] Error writing {self.PENDING_FILE}: {e}")
+
+    # ── Queue management ──────────────────────────────────────────────────────
+
+    def queue_spec(self, model, points):
+        """Persist a spec that couldn't reach the DB. Returns pending model count."""
+        with self.lock:
+            specs = self._read()
+            specs[model] = [
+                {"seq": i, "name": p["name"],
+                 "lower": float(p["lower"]), "upper": float(p["upper"])}
+                for i, p in enumerate(points, start=1)
+            ]
+            self._write(specs)
+            count = len(specs)
+        print(f"[SpecQueue] Queued spec for {model} "
+              f"({len(points)} points) — {count} model(s) pending")
+        return count
+
+    def pending_count(self):
+        with self.lock:
+            return len(self._read())
+
+    def pending_models(self):
+        with self.lock:
+            return list(self._read().keys())
+
+    # ── Flush ─────────────────────────────────────────────────────────────────
+
+    def flush_async(self):
+        """Try to upload every queued spec. Stops at the first connection error."""
+        if self.is_flushing:
+            return
+
+        def flush_worker():
+            self.is_flushing = True
+            flushed = 0
+            try:
+                with self.lock:
+                    specs = self._read()
+                if not specs:
+                    return
+
+                remaining = OrderedDict(specs)
+                for model, pts in specs.items():
+                    try:
+                        upsert_model_spec(model, pts, timeout=self.UPLOAD_TIMEOUT)
+                        remaining.pop(model, None)
+                        flushed += 1
+                        print(f"[SpecQueue] Flushed spec for {model}")
+                    except ValueError as e:
+                        # Invalid data can never succeed — drop it instead of
+                        # retrying forever.
+                        print(f"[SpecQueue] Dropping invalid queued spec {model}: {e}")
+                        remaining.pop(model, None)
+                    except Exception as e:
+                        print(f"[SpecQueue] Server still unreachable ({e}) — "
+                              f"{len(remaining)} model(s) still queued")
+                        break
+
+                with self.lock:
+                    self._write(remaining)
+                    left = len(remaining)
+
+                if self.parent_signals and flushed:
+                    self.parent_signals.spec_flush_complete.emit(flushed, left)
+            except Exception as e:
+                print(f"[SpecQueue] Unexpected flush error: {e}")
+            finally:
+                self.is_flushing = False
+
+        Thread(target=flush_worker, daemon=True).start()

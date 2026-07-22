@@ -187,6 +187,34 @@ Operators create or edit a model's point sequence from the QC screen — no dire
 - On success the points are cached to `gui_mode5_config.json`; if the saved model is the active
   one it refreshes in place, otherwise the app offers to switch to it.
 
+### Two entry points
+
+| Button | Opens | Use |
+|--------|-------|-----|
+| **＋ New Model** | blank dialog | register a model that doesn't exist yet |
+| **⚙ Edit Spec** | prefilled with the active model | change an existing model's points |
+
+Both funnel through `_start_spec_save()`, so they share identical save, queue, and adopt logic.
+
+### Offline queue — specs behave like readings
+
+A spec write is treated exactly like a resistance upload: **if the server is unreachable it is
+kept locally and uploaded automatically later.**
+
+- `SpecQueueManager` (in `db_upload_manager.py`) persists pending specs to **`pending_specs.csv`**
+  — `QueuedAt, Model, Seq, PointName, LowerLimit, UpperLimit`, one row per point. (`*.csv` is
+  already git-ignored.)
+- Re-saving a model **replaces** its queued rows rather than appending. The DB write is an
+  idempotent `DELETE`+`INSERT`, so only the newest version may ever be replayed.
+- The queue is flushed on the same trigger as readings: the 5 s retry timer (gated by
+  `DBUploadManager`'s backoff) and immediately after any successful reading upload.
+- `SpecUpsertThread` separates the two failure kinds — a **connection** error is queued, while a
+  **validation** error (`ValueError`) is rejected outright, since retrying can never fix it. A
+  queued spec that later proves invalid is dropped rather than retried forever.
+- A queued spec is still **adopted locally** (cached + applied), so the operator can measure with
+  it immediately while it waits to upload.
+- Pending specs are reported at startup alongside pending readings.
+
 The interactive [HIOKI_UI_mockup.html](HIOKI_UI_mockup.html) demonstrates the same flow (its
 **Register Model** tab, simulated) including the generated SQL.
 
