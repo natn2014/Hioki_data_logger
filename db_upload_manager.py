@@ -95,12 +95,17 @@ class DBUploadManager:
 
     # ── Queue management ──────────────────────────────────────────────────────
 
-    def add_pending_upload(self, model, value, status):
+    def add_pending_upload(self, model, value, status,
+                           point=None, seq=None, lower=None, upper=None):
         with self.upload_lock:
             record = {
                 "model":         model,
                 "value":         value,
                 "status":        status,
+                "point":         point,
+                "seq":           seq,
+                "lower":         lower,
+                "upper":         upper,
                 "timestamp":     datetime.now().isoformat(),
                 "retry_count":   0,
             }
@@ -122,11 +127,13 @@ class DBUploadManager:
 
     # ── Immediate upload ──────────────────────────────────────────────────────
 
-    def upload_async(self, model, value, status, callback=None):
+    def upload_async(self, model, value, status, callback=None,
+                     point=None, seq=None, lower=None, upper=None):
         """Upload in background. If server is known down, queue directly."""
         if not self.server_reachable:
             # Skip the network attempt — just queue it.
-            count = self.add_pending_upload(model, value, status)
+            count = self.add_pending_upload(model, value, status,
+                                            point, seq, lower, upper)
             wait  = int(self.seconds_until_retry())
             msg   = f"Server down — queued ({count} pending, retry in {wait}s)"
             if self.parent_signals:
@@ -135,13 +142,16 @@ class DBUploadManager:
 
         def upload_worker():
             try:
-                insert_to_mssql(model, value, status, timeout=self.UPLOAD_TIMEOUT)
+                insert_to_mssql(model, value, status,
+                                point=point, seq=seq, lower=lower, upper=upper,
+                                timeout=self.UPLOAD_TIMEOUT)
                 self._mark_server_up()
                 print(f"[DBUploadManager] Upload OK: {model}={value}")
                 if self.parent_signals:
                     self.parent_signals.upload_complete.emit(True, "")
             except Exception as e:
-                count = self.add_pending_upload(model, value, status)
+                count = self.add_pending_upload(model, value, status,
+                                                point, seq, lower, upper)
                 self._mark_server_down()
                 print(f"[DBUploadManager] Upload failed ({count} pending): {e}")
                 if self.parent_signals:
@@ -184,6 +194,8 @@ class DBUploadManager:
                     try:
                         insert_to_mssql(
                             record['model'], record['value'], record['status'],
+                            point=record.get('point'), seq=record.get('seq'),
+                            lower=record.get('lower'), upper=record.get('upper'),
                             timeout=self.UPLOAD_TIMEOUT,
                         )
                         with self.upload_lock:
