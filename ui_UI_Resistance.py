@@ -27,7 +27,11 @@ class Ui_Dialog(object):
         sizePolicy.setVerticalStretch(0)
         sizePolicy.setHeightForWidth(Dialog.sizePolicy().hasHeightForWidth())
         Dialog.setSizePolicy(sizePolicy)
-        self.verticalLayout = QVBoxLayout(Dialog)
+        # Top-level split: left column holds all controls, right column is the
+        # Data Log (relocated to the far right for at-a-glance visibility).
+        self.mainLayout = QHBoxLayout(Dialog)
+        self.mainLayout.setObjectName(u"mainLayout")
+        self.verticalLayout = QVBoxLayout()
         self.verticalLayout.setObjectName(u"verticalLayout")
 
         # ── Status bar (connection + model button) ────────────────────────────
@@ -168,18 +172,21 @@ class Ui_Dialog(object):
         self.verticalLayout_2.addWidget(self.pushButton_Judgement)
         self.verticalLayout.addWidget(self.groupBox_Judge)
 
-        # ── Data Log ──────────────────────────────────────────────────────────
+        # ── Data Log (right-hand column, full height) ─────────────────────────
         self.groupBox = QGroupBox(Dialog)
         self.groupBox.setObjectName(u"groupBox")
-        self.groupBox.setMinimumSize(QSize(0, 100))
-        self.groupBox.setMaximumSize(QSize(16777215, 150))
+        self.groupBox.setMinimumSize(QSize(300, 0))              # readable width
+        self.groupBox.setMaximumSize(QSize(16777215, 16777215))  # fill full height
         self.groupBox.setFont(font)
         self.verticalLayout_6 = QVBoxLayout(self.groupBox)
         self.verticalLayout_6.setObjectName(u"verticalLayout_6")
         self.listView_logger = QListView(self.groupBox)
         self.listView_logger.setObjectName(u"listView_logger")
         self.verticalLayout_6.addWidget(self.listView_logger)
-        self.verticalLayout.addWidget(self.groupBox)
+
+        # Compose the split: controls left (stretch 3), Data Log right (stretch 2).
+        self.mainLayout.addLayout(self.verticalLayout, 3)
+        self.mainLayout.addWidget(self.groupBox, 2)
 
         self.retranslateUi(Dialog)
         QMetaObject.connectSlotsByName(Dialog)
