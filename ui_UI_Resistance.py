@@ -186,7 +186,7 @@ class Ui_Dialog(object):
 
         # Compose the split: controls left (stretch 3), Data Log right (stretch 2).
         self.mainLayout.addLayout(self.verticalLayout, 3)
-        self.mainLayout.addWidget(self.groupBox, 2)
+        self.mainLayout.addWidget(self.groupBox, 1)
 
         self.retranslateUi(Dialog)
         QMetaObject.connectSlotsByName(Dialog)
