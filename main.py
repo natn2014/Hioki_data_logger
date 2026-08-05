@@ -40,6 +40,7 @@ CSV_HEADERS = ["Timestamp", "Resistance", "Status", "Model",
                "Point", "Seq", "LowerLimit", "UpperLimit",
                "Date", "Time", "DB_Status"]
 MODEL_CHANGE_LOG = "model_changes.csv"  # persistent record of every model switch
+SPEC_DECIMALS = 2  # decimal places for spec limits (entry, storage, and display)
 
 # Tappable point card: normal / active (checked) / pressed states. Sized for
 # fingertips on the touch panel.
@@ -292,8 +293,8 @@ class ModelSpecDialog(QDialog):
         upper_spin = QDoubleSpinBox()
         for sp in (lower_spin, upper_spin):
             sp.setRange(0.0, 9999.0)
-            sp.setDecimals(3)
-            sp.setSingleStep(0.1)
+            sp.setDecimals(SPEC_DECIMALS)
+            sp.setSingleStep(0.01)
             sp.lineEdit().installEventFilter(self)  # tap opens numpad
         if lower is not None:
             lower_spin.setValue(float(lower))
@@ -375,7 +376,7 @@ class ModelSpecDialog(QDialog):
 
     def _numpad(self, spinbox, title):
         dlg = NumpadDialog(
-            current_value=spinbox.value(), decimals=3, title=title,
+            current_value=spinbox.value(), decimals=spinbox.decimals(), title=title,
             min_val=spinbox.minimum(), max_val=spinbox.maximum(), parent=self,
         )
         if dlg.exec() == QDialog.DialogCode.Accepted:
@@ -401,7 +402,8 @@ class ModelSpecDialog(QDialog):
             up = rec["upper"].value()
             if lo >= up:
                 return None, None, f"point {i} ({name}): lower must be < upper"
-            points.append({"name": name, "lower": round(lo, 3), "upper": round(up, 3)})
+            points.append({"name": name, "lower": round(lo, SPEC_DECIMALS),
+                           "upper": round(up, SPEC_DECIMALS)})
         return model, points, None
 
     def _on_save(self):
@@ -596,13 +598,13 @@ class MainWindow(QDialog):
 
         # Configure spinboxes for limits
         self.ui.doubleSpinBox_lowerLimit.setRange(0.01, 9999.0)
-        self.ui.doubleSpinBox_lowerLimit.setDecimals(3)
+        self.ui.doubleSpinBox_lowerLimit.setDecimals(SPEC_DECIMALS)
         self.ui.doubleSpinBox_lowerLimit.setSingleStep(0.01)
         self.ui.doubleSpinBox_lowerLimit.setValue(self.lower_limit)
         self.ui.doubleSpinBox_lowerLimit.valueChanged.connect(self.on_limit_changed)
 
         self.ui.doubleSpinBox_UpperLimit.setRange(0.01, 9999.0)
-        self.ui.doubleSpinBox_UpperLimit.setDecimals(3)
+        self.ui.doubleSpinBox_UpperLimit.setDecimals(SPEC_DECIMALS)
         self.ui.doubleSpinBox_UpperLimit.setSingleStep(0.01)
         self.ui.doubleSpinBox_UpperLimit.setValue(self.upper_limit)
         self.ui.doubleSpinBox_UpperLimit.valueChanged.connect(self.on_limit_changed)
@@ -742,7 +744,7 @@ class MainWindow(QDialog):
     def _show_numpad_for_spinbox(self, spinbox, label):
         dlg = NumpadDialog(
             current_value=spinbox.value(),
-            decimals=3,
+            decimals=spinbox.decimals(),
             title=label,
             min_val=spinbox.minimum(),
             max_val=spinbox.maximum(),
@@ -1075,7 +1077,8 @@ class MainWindow(QDialog):
         self._apply_point_to_ui()
         p = self.spec_points[index]
         self.log_event(f"Point selected by tap: {p['name']} (seq {p['seq']})")
-        self.append_log(f"Point → {p['name']} ({p['lower']:g}–{p['upper']:g} Ω)")
+        self.append_log(f"Point → {p['name']} "
+                        f"({p['lower']:.{SPEC_DECIMALS}f}–{p['upper']:.{SPEC_DECIMALS}f} Ω)")
 
     def _cards_signature(self):
         """Identity of the current card set — rebuild only when this changes."""
@@ -1093,7 +1096,7 @@ class MainWindow(QDialog):
 
         for i, p in enumerate(self.spec_points):
             card = QPushButton(
-                f"{p['name']}\n{p['lower']:g} – {p['upper']:g} Ω\nseq {p['seq']}"
+                f"{p['name']}\n{p['lower']:.{SPEC_DECIMALS}f} – {p['upper']:.{SPEC_DECIMALS}f} Ω\nseq {p['seq']}"
             )
             card.setCheckable(True)
             card.setMinimumHeight(76)
@@ -1136,7 +1139,7 @@ class MainWindow(QDialog):
             idx, n = self.current_point_index + 1, len(self.spec_points)
             self.ui.groupBox_MeasureValue.setTitle(
                 f"Measured — {point['name']} "
-                f"({point['lower']:g}–{point['upper']:g}Ω)  {idx}/{n}"
+                f"({point['lower']:.{SPEC_DECIMALS}f}–{point['upper']:.{SPEC_DECIMALS}f}Ω)  {idx}/{n}"
             )
         else:
             self.ui.groupBox_MeasureValue.setTitle("Measured")

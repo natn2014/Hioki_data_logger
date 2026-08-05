@@ -65,6 +65,7 @@ class KeyboardDialog(QDialog):
         btn.setStyleSheet(
             f"QPushButton{{background:{palette[0]};color:white;border-radius:8px;}}"
             f"QPushButton:pressed{{background:{palette[1]};}}"
+            f"QPushButton:checked{{background:#16a085;border:2px solid #1abc9c;}}"
         )
         return btn
 
@@ -109,8 +110,11 @@ class KeyboardDialog(QDialog):
         bottom = QHBoxLayout()
         bottom.setSpacing(self._px(6))
 
-        self.shift_btn = self._make_key("⇧ abc", kind="action")
-        self.shift_btn.clicked.connect(self._toggle_case)
+        # Checkable so the case state is visibly highlighted (checked = UPPER).
+        self.shift_btn = self._make_key("⇧ ABC", kind="action")
+        self.shift_btn.setCheckable(True)
+        self.shift_btn.setChecked(self._upper)
+        self.shift_btn.toggled.connect(self._on_shift)
         bottom.addWidget(self.shift_btn, 2)
 
         for sym in _SYMBOLS:
@@ -176,11 +180,12 @@ class KeyboardDialog(QDialog):
             self.display.backspace()
         self.display.setFocus()
 
-    def _toggle_case(self):
-        self._upper = not self._upper
-        self.shift_btn.setText("⇧ ABC" if not self._upper else "⇧ abc")
+    def _on_shift(self, checked):
+        """Shift toggled: checked = UPPER case. Relabels letters + highlights."""
+        self._upper = checked
+        self.shift_btn.setText("⇧ ABC" if checked else "⇧ abc")
         for btn in self._letter_buttons:
-            btn.setText(btn.text().upper() if self._upper else btn.text().lower())
+            btn.setText(btn.text().upper() if checked else btn.text().lower())
         self.display.setFocus()
 
     def get_text(self):
