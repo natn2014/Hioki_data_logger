@@ -640,13 +640,17 @@ class MainWindow(QDialog):
         self.btn_reset_point = QPushButton("⟲ Reset to first point")
         self.btn_new_model = QPushButton("＋ New Model")
         self.btn_edit_spec = QPushButton("⚙ Edit Spec")
-        for b in (self.btn_reset_point, self.btn_new_model, self.btn_edit_spec):
+        # Force-uploads pending_uploads.json now, skipping the retry timer/backoff.
+        self.btn_upload_now = QPushButton("⬆ Upload Now")
+        for b in (self.btn_reset_point, self.btn_new_model,
+                  self.btn_edit_spec, self.btn_upload_now):
             b.setMinimumHeight(48)
             self.point_button_row.addWidget(b)
         self.ui.groupBox_Judge.layout().addLayout(self.point_button_row)
         self.btn_reset_point.clicked.connect(self.on_reset_point)
         self.btn_new_model.clicked.connect(self.on_new_model_clicked)
         self.btn_edit_spec.clicked.connect(self.on_edit_spec_clicked)
+        self.btn_upload_now.clicked.connect(self.on_upload_now_clicked)
         self._apply_point_to_ui()  # builds cards + sets initial enabled state
 
         # Check if there are pending uploads to retry
@@ -1644,6 +1648,25 @@ class MainWindow(QDialog):
             wait_str = f"{int(wait)}s"
             self.log_event(f"Batch retry failed — {remaining_count} record(s) still pending")
             self.append_log(f"! Retry failed — {remaining_count} queued, next in {wait_str}")
+
+    def on_upload_now_clicked(self):
+        """Force an immediate flush of pending_uploads.json — no timer/backoff wait."""
+        pending = self.db_manager.get_pending_count()
+        specs = self.spec_queue.pending_count()
+        if pending == 0 and specs == 0:
+            self.log_event("Upload Now: nothing pending")
+            self.append_log("Upload Now — queue already empty")
+            return
+        if self.db_manager.is_uploading:
+            self.append_log("Upload Now — an upload is already in progress…")
+            return
+        self.log_event(f"Upload Now: forcing flush of {pending} reading(s), {specs} spec(s)")
+        self.append_log(f"⬆ Uploading {pending} pending record(s) now…")
+        # force=True bypasses the backoff window; the batch runs off-thread and
+        # reports back through on_retry_complete.
+        self.db_manager.retry_pending_uploads(force=True)
+        if specs > 0:
+            self.spec_queue.flush_async()
 
     def handle_comm_error(self, msg):
         """Recover from serial I/O failures by resetting connection and retrying detection."""

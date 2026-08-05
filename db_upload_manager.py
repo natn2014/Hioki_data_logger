@@ -164,16 +164,17 @@ class DBUploadManager:
 
     # ── Batch retry ───────────────────────────────────────────────────────────
 
-    def retry_pending_uploads(self, callback=None):
+    def retry_pending_uploads(self, callback=None, force=False):
         """Probe server then batch-flush ALL pending records.
 
         Called by the main-thread timer. Gates itself with:
-        - is_uploading  — prevent concurrent batch runs
-        - should_retry_now() — enforce exponential backoff window
+        - is_uploading  — prevent concurrent batch runs (always enforced)
+        - should_retry_now() — exponential backoff window (skipped when force=True,
+          e.g. an operator pressing "Upload Now")
         """
         if self.is_uploading:
             return
-        if not self.should_retry_now():
+        if not force and not self.should_retry_now():
             return
         if not self.pending_uploads:
             return
