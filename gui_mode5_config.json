@@ -1,5 +1,5 @@
 {
-  "current_model": "SRG14-WS",
+  "current_model": "500D",
   "models": {
     "TESE": {
       "lower_limit": 1.7,
@@ -12,6 +12,24 @@
     "SRG14-WS": {
       "lower_limit": 8.7,
       "upper_limit": 9.0
+    },
+    "500D": {
+      "lower_limit": 8.7,
+      "upper_limit": 9.0,
+      "points": [
+        {
+          "lower": 2.9,
+          "name": "A-B",
+          "seq": 1,
+          "upper": 3.43
+        },
+        {
+          "lower": 7.86,
+          "name": "B-C",
+          "seq": 2,
+          "upper": 9.31
+        }
+      ]
     }
   }
 }

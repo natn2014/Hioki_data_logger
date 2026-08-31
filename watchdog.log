@@ -1,0 +1,109 @@
+[2026-08-05 10:26:39] ========================================
+[2026-08-05 10:26:39] Watchdog started. Monitoring: main.py
+[2026-08-05 10:26:39] Check interval : 10s
+[2026-08-05 10:26:39] Kill threshold : 3 consecutive D-state checks
+[2026-08-05 10:26:51] ========================================
+[2026-08-05 10:26:51] Watchdog started. Monitoring: main.py
+[2026-08-05 10:26:51] Check interval : 10s
+[2026-08-05 10:26:51] Kill threshold : 3 consecutive D-state checks
+[2026-08-05 10:29:07] ========================================
+[2026-08-05 10:29:07] Watchdog started. Monitoring: main.py
+[2026-08-05 10:29:07] Check interval : 10s
+[2026-08-05 10:29:07] Kill threshold : 3 consecutive D-state checks
+[2026-08-05 10:30:16] ========================================
+[2026-08-05 10:30:16] Watchdog started. Monitoring: main.py
+[2026-08-05 10:30:16] Check interval : 10s
+[2026-08-05 10:30:16] Kill threshold : 3 consecutive D-state checks
+[2026-08-05 10:31:03] ========================================
+[2026-08-05 10:31:03] Watchdog started. Monitoring: main.py
+[2026-08-05 10:31:03] Check interval : 10s
+[2026-08-05 10:31:03] Kill threshold : 3 consecutive D-state checks
+[2026-08-05 10:32:29] ========================================
+[2026-08-05 10:32:29] Watchdog started. Monitoring: main.py
+[2026-08-05 10:32:29] Check interval : 10s
+[2026-08-05 10:32:29] Kill threshold : 3 consecutive D-state checks
+[2026-08-05 10:32:50] ========================================
+[2026-08-05 10:32:50] Watchdog started. Monitoring: main.py
+[2026-08-05 10:32:50] Check interval : 10s
+[2026-08-05 10:32:50] Kill threshold : 3 consecutive D-state checks
+[2026-08-05 10:37:23] ========================================
+[2026-08-05 10:37:23] Watchdog started. Monitoring: main.py
+[2026-08-05 10:37:23] Check interval : 10s
+[2026-08-05 10:37:23] Kill threshold : 3 consecutive D-state checks
+[2026-08-05 10:37:23] PID 1219: D-state (blocked/hung) [1 / 3]
+[2026-08-24 05:09:38] ========================================
+[2026-08-24 05:09:38] Watchdog started. Monitoring: main.py
+[2026-08-24 05:09:38] Check interval : 10s
+[2026-08-24 05:09:38] Kill threshold : 3 consecutive D-state checks
+[2026-08-24 05:09:38] PID 1223: D-state (blocked/hung) [1 / 3]
+[2026-08-24 05:29:26] ========================================
+[2026-08-24 05:29:26] Watchdog started. Monitoring: main.py
+[2026-08-24 05:29:26] Check interval : 10s
+[2026-08-24 05:29:26] Kill threshold : 3 consecutive D-state checks
+[2026-08-24 05:29:26] PID 1225: D-state (blocked/hung) [1 / 3]
+[2026-08-24 07:06:37] ========================================
+[2026-08-24 07:06:37] Watchdog started. Monitoring: main.py
+[2026-08-24 07:06:37] Check interval : 10s
+[2026-08-24 07:06:37] Kill threshold : 3 consecutive D-state checks
+[2026-08-24 07:06:47] ========================================
+[2026-08-24 07:06:47] Watchdog started. Monitoring: main.py
+[2026-08-24 07:06:47] Check interval : 10s
+[2026-08-24 07:06:47] Kill threshold : 3 consecutive D-state checks
+[2026-08-24 07:07:06] ========================================
+[2026-08-24 07:07:06] Watchdog started. Monitoring: main.py
+[2026-08-24 07:07:06] Check interval : 10s
+[2026-08-24 07:07:06] Kill threshold : 3 consecutive D-state checks
+[2026-08-24 07:08:33] ========================================
+[2026-08-24 07:08:33] Watchdog started. Monitoring: main.py
+[2026-08-24 07:08:33] Check interval : 10s
+[2026-08-24 07:08:33] Kill threshold : 3 consecutive D-state checks
+[2026-08-24 07:08:40] ========================================
+[2026-08-24 07:08:40] Watchdog started. Monitoring: main.py
+[2026-08-24 07:08:40] Check interval : 10s
+[2026-08-24 07:08:40] Kill threshold : 3 consecutive D-state checks
+[2026-08-24 07:10:19] ========================================
+[2026-08-24 07:10:19] Watchdog started. Monitoring: main.py
+[2026-08-24 07:10:19] Check interval : 10s
+[2026-08-24 07:10:19] Kill threshold : 3 consecutive D-state checks
+[2026-08-24 07:10:56] ========================================
+[2026-08-24 07:10:56] Watchdog started. Monitoring: main.py
+[2026-08-24 07:10:56] Check interval : 10s
+[2026-08-24 07:10:56] Kill threshold : 3 consecutive D-state checks
+[2026-08-24 07:16:11] ========================================
+[2026-08-24 07:16:11] Watchdog started. Monitoring: main.py
+[2026-08-24 07:16:11] Check interval : 10s
+[2026-08-24 07:16:11] Kill threshold : 3 consecutive D-state checks
+[2026-08-24 07:16:18] ========================================
+[2026-08-24 07:16:18] Watchdog started. Monitoring: main.py
+[2026-08-24 07:16:18] Check interval : 10s
+[2026-08-24 07:16:18] Kill threshold : 3 consecutive D-state checks
+[2026-08-24 07:16:26] ========================================
+[2026-08-24 07:16:26] Watchdog started. Monitoring: main.py
+[2026-08-24 07:16:26] Check interval : 10s
+[2026-08-24 07:16:26] Kill threshold : 3 consecutive D-state checks
+[2026-08-24 07:16:33] ========================================
+[2026-08-24 07:16:33] Watchdog started. Monitoring: main.py
+[2026-08-24 07:16:33] Check interval : 10s
+[2026-08-24 07:16:33] Kill threshold : 3 consecutive D-state checks
+[2026-08-24 07:16:39] ========================================
+[2026-08-24 07:16:39] Watchdog started. Monitoring: main.py
+[2026-08-24 07:16:39] Check interval : 10s
+[2026-08-24 07:16:39] Kill threshold : 3 consecutive D-state checks
+[2026-08-24 08:15:26] ========================================
+[2026-08-24 08:15:26] Watchdog started. Monitoring: main.py
+[2026-08-24 08:15:26] Check interval : 10s
+[2026-08-24 08:15:26] Kill threshold : 3 consecutive D-state checks
+[2026-08-24 08:15:26] PID 1222: D-state (blocked/hung) [1 / 3]
+[2026-08-24 08:21:01] ========================================
+[2026-08-24 08:21:01] Watchdog started. Monitoring: main.py
+[2026-08-24 08:21:01] Check interval : 10s
+[2026-08-24 08:21:01] Kill threshold : 3 consecutive D-state checks
+[2026-08-24 08:21:17] ========================================
+[2026-08-24 08:21:17] Watchdog started. Monitoring: main.py
+[2026-08-24 08:21:17] Check interval : 10s
+[2026-08-24 08:21:17] Kill threshold : 3 consecutive D-state checks
+[2026-08-24 08:39:35] ========================================
+[2026-08-24 08:39:35] Watchdog started. Monitoring: main.py
+[2026-08-24 08:39:35] Check interval : 10s
+[2026-08-24 08:39:35] Kill threshold : 3 consecutive D-state checks
+[2026-08-24 08:39:35] PID 1209: D-state (blocked/hung) [1 / 3]
