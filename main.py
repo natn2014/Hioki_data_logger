@@ -15,6 +15,7 @@ import subprocess
 import serial
 import serial.tools.list_ports
 from datetime import datetime
+from threading import Thread
 from PySide6.QtCore import QTimer, QThread, Signal, Qt, QStringListModel, QEvent, QUrl
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtWidgets import (
@@ -41,6 +42,17 @@ CSV_HEADERS = ["Timestamp", "Resistance", "Status", "Model",
                "Date", "Time", "DB_Status"]
 MODEL_CHANGE_LOG = "model_changes.csv"  # persistent record of every model switch
 SPEC_DECIMALS = 2  # decimal places for spec limits (entry, storage, and display)
+
+# Serial hardware-hang recovery. A normal poll cycle is <=2 s (FETC? timeout) +
+# 0.5 s interval; if the worker's liveness stamp stops advancing for this long,
+# the serial link is wedged and we soft-recover without closing the app.
+STALL_LIMIT_S = 8.0
+STALL_CHECK_MS = 2000
+# Watchdog backstop: main.py touches this on each successful poll; watchdog.sh
+# force-restarts if it goes stale (well above STALL_LIMIT_S + reconnect backoff
+# so in-app soft recovery always gets first chance).
+HEARTBEAT_FILE = "heartbeat.txt"
+HEARTBEAT_MIN_INTERVAL_S = 5.0  # throttle disk writes to spare the SD card
 
 # Tappable point card: normal / active (checked) / pressed states. Sized for
 # fingertips on the touch panel.
@@ -430,6 +442,11 @@ class PollWorkerThread(QThread):
         self.poll_interval = poll_interval_ms / 1000.0
         self.health_check_interval = health_check_interval
         self._running = False
+        # Liveness stamp read by the UI thread's stall detector. A wedged
+        # SendQueryMsg freezes this thread mid-syscall and stops advancing this
+        # timestamp, which is how a silent D-state hang is caught. Plain float
+        # read/write is atomic under the GIL, so no lock is needed.
+        self.last_cycle_ts = time.time()
 
     def run(self):
         self._running = True
@@ -437,6 +454,7 @@ class PollWorkerThread(QThread):
         try:
             while self._running:
                 t_start = time.time()
+                self.last_cycle_ts = t_start
 
                 msg = self.serial_obj.SendQueryMsg("FETC?", 2)
                 if not self._running:
@@ -575,6 +593,11 @@ class MainWindow(QDialog):
         # Background poll thread — owns all serial I/O after connection
         self.poll_thread = None
         self.wifi_thread = None
+        # A wedged poll thread is frozen in D-state and cannot be joined; we must
+        # still keep the QThread object alive (dropping the last reference while
+        # its OS thread runs makes PySide6 abort). Park orphans here and prune
+        # them once the kernel finally frees them.
+        self._orphaned_threads = []
 
         # Non-blocking timers: reconnect scheduling and upload retry only
         self.detect_retry_timer = QTimer(self)
@@ -583,6 +606,14 @@ class MainWindow(QDialog):
         self.retry_upload_timer = QTimer(self)
         self.retry_upload_timer.setSingleShot(False)
         self.retry_upload_timer.timeout.connect(self.retry_pending_uploads)
+
+        # Serial-hang detector: watches the poll worker's liveness stamp from the
+        # (still-alive) UI thread and soft-recovers a wedged connection.
+        self._last_heartbeat_write = 0.0
+        self.stall_check_timer = QTimer(self)
+        self.stall_check_timer.setSingleShot(False)
+        self.stall_check_timer.timeout.connect(self.check_poll_liveness)
+        self.stall_check_timer.start(STALL_CHECK_MS)
 
         self.init_ui()
         self.load_config()
@@ -1668,6 +1699,81 @@ class MainWindow(QDialog):
         if specs > 0:
             self.spec_queue.flush_async()
 
+    def _touch_heartbeat(self):
+        """Write epoch seconds to the heartbeat file (throttled) so watchdog.sh
+        can tell 'app alive but readings frozen' apart from a healthy run."""
+        now = time.time()
+        if now - self._last_heartbeat_write < HEARTBEAT_MIN_INTERVAL_S:
+            return
+        self._last_heartbeat_write = now
+        try:
+            with open(HEARTBEAT_FILE, "w") as f:
+                f.write(str(int(now)))
+        except Exception as e:
+            self.log_event(f"Heartbeat write failed: {e}")
+
+    def check_poll_liveness(self):
+        """UI-thread stall detector. A wedged serial call freezes the poll worker
+        mid-syscall (uninterruptible D-state) so its liveness stamp stops
+        advancing; catch that here and soft-recover without closing the app.
+
+        This timer fires every STALL_CHECK_MS as long as the Qt event loop is
+        alive, so it also drives the watchdog heartbeat — a true 'app alive'
+        signal that stays fresh even while the meter is unplugged and the app is
+        merely waiting to reconnect."""
+        self._touch_heartbeat()
+        # Release any parked orphan whose OS thread the kernel has finally freed.
+        if self._orphaned_threads:
+            self._orphaned_threads = [
+                t for t in self._orphaned_threads if t.isRunning()]
+        if not self.connected or self.poll_thread is None:
+            return
+        if not self.poll_thread.isRunning():
+            return
+        age = time.time() - self.poll_thread.last_cycle_ts
+        if age > STALL_LIMIT_S:
+            self.handle_poll_stall(age)
+
+    def handle_poll_stall(self, age):
+        """The poll worker stopped advancing — treat as a serial hardware hang.
+        Orphan the (frozen, unkillable) thread and rebuild on a fresh handle."""
+        self.log_event(
+            f"Serial hardware hang detected (no poll for {age:.1f}s) — reconnecting")
+        self.append_log("⚠ Serial hardware hang — reconnecting…")
+        self._set_usb_status("connecting")
+
+        # Orphan the wedged worker: signal it to stop (it obeys if/when the kernel
+        # frees it) and PARK it so PySide6 doesn't abort on a GC'd running QThread.
+        # Never wait()/join a frozen thread — that would freeze the UI too.
+        wedged = self.poll_thread
+        if wedged is not None:
+            wedged.stop()
+            self._orphaned_threads.append(wedged)
+        self.poll_thread = None
+
+        # Abandon the wedged serial handle for a brand-new one. close() on a dead
+        # device can itself block in D, so do it fire-and-forget off the UI thread.
+        old_serial = self.serial_obj
+        Thread(target=lambda: self._safe_close(old_serial), daemon=True).start()
+        self.serial_obj = Usb_rs(gui=True)
+
+        # Reset connection state and route through the normal re-detection path.
+        self.connected = False
+        self.current_port = None
+        self.previous_numeric = None
+        self.previous_raw = None
+        self.consecutive_timeouts = 0
+        retry_ms = int(self.reconnect_delay * 1000)
+        self.log_event(f"Scheduling reconnection attempt in {self.reconnect_delay:.1f}s")
+        self.detect_retry_timer.start(retry_ms)
+
+    @staticmethod
+    def _safe_close(serial_obj):
+        try:
+            serial_obj.close()
+        except Exception:
+            pass
+
     def handle_comm_error(self, msg):
         """Recover from serial I/O failures by resetting connection and retrying detection."""
         if not self.connected:
@@ -1690,6 +1796,7 @@ class MainWindow(QDialog):
             "resource busy",
             "multiple timeouts",
             "health check failed",
+            "write timeout",
         )
 
         trigger_reconnect = any(k in error_lower for k in reconnect_keywords)
@@ -1713,6 +1820,9 @@ class MainWindow(QDialog):
     def _stop_poll_thread(self):
         if self.poll_thread is not None:
             self.poll_thread.stop()
+            # Park rather than drop: if the thread is mid-syscall, GC'ing a live
+            # QThread aborts PySide6. check_poll_liveness prunes it once freed.
+            self._orphaned_threads.append(self.poll_thread)
             self.poll_thread = None
 
     def _close_serial_connection(self):

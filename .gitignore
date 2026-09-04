@@ -12,6 +12,7 @@ pending_uploads.json
 watchdog.log
 network_status.log
 network_status.txt
+heartbeat.txt
 
 # OS
 .DS_Store

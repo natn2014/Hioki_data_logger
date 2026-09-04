@@ -10,6 +10,10 @@ class Usb_rs:
         self.ser = serial
         self.gui = gui
         self.read_chunk_timeout = 0.1
+        # Bound every write: without this a wedged USB TX path blocks forever in
+        # uninterruptible D-state (the app freezes). A timeout raises
+        # SerialTimeoutException instead, which routes to reconnection.
+        self.write_timeout = 1.0
         self.last_error = ""
         self.port_name = None
 
@@ -43,8 +47,11 @@ class Usb_rs:
         ret = False
 
         try:
-            # Use longer timeout for batch reading
-            self.ser = serial.Serial(port, speed, timeout=self.read_chunk_timeout)
+            # Use longer timeout for batch reading; bound writes so a wedged
+            # device raises instead of hanging the poll thread in D-state.
+            self.ser = serial.Serial(port, speed,
+                                     timeout=self.read_chunk_timeout,
+                                     write_timeout=self.write_timeout)
             self.port_name = port
             self.last_error = ""
             self._report_error("Port Open", f"Successfully opened {port} at {speed} baud")
@@ -82,6 +89,12 @@ class Usb_rs:
             self.ser.write(bytes(strMsg, 'utf-8'))  #Convert to byte type and send
             self.last_error = ""
             ret = True
+        except serial.SerialTimeoutException as e:
+            # Write did not complete within write_timeout — the device/USB path
+            # is wedged. Surface a keyword ("write timeout") that main.py's
+            # handle_comm_error recognizes so it triggers a reconnect.
+            self.last_error = f"Write timeout - device not responding ({e})"
+            self._report_error("Send Error", self.last_error)
         except serial.SerialException as e:
             self.last_error = str(e)
             self._report_error("Send Error", f"Serial error: {e}")

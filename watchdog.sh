@@ -17,6 +17,15 @@ CHECK_INTERVAL=10       # seconds between each check
 MAX_D_CHECKS=3          # consecutive D-state hits before kill  (3 × 10s = 30s)
 LOG="$(dirname "$0")/watchdog.log"
 
+# Heartbeat backstop. The app touches this file (~every few seconds) from its Qt
+# event loop. The D-state check above reads the process's MAIN thread state and
+# structurally MISSES a hang confined to the serial poll worker thread; a stale
+# heartbeat catches "app alive but permanently stalled" that D-state cannot.
+# Threshold is deliberately generous so the app's own soft recovery gets first
+# chance before we force a restart.
+HEARTBEAT_FILE="$(dirname "$0")/heartbeat.txt"
+MAX_HEARTBEAT_AGE=90    # seconds without a heartbeat before force-restart
+
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG"
 }
@@ -38,6 +47,21 @@ while true; do
         consecutive_d=0
         sleep "$CHECK_INTERVAL"
         continue
+    fi
+
+    # Heartbeat staleness check — catches a stalled app whose main thread still
+    # reports a normal (S/R) state, so the D-state check below never fires.
+    if [ -f "$HEARTBEAT_FILE" ]; then
+        NOW=$(date +%s)
+        HB_MTIME=$(stat -c %Y "$HEARTBEAT_FILE" 2>/dev/null || echo "$NOW")
+        HB_AGE=$((NOW - HB_MTIME))
+        if [ "$HB_AGE" -ge "$MAX_HEARTBEAT_AGE" ]; then
+            log "STALL DETECTED — heartbeat ${HB_AGE}s old (>= ${MAX_HEARTBEAT_AGE}s) — killing PID $PID"
+            kill -9 "$PID"
+            consecutive_d=0
+            sleep "$CHECK_INTERVAL"
+            continue
+        fi
     fi
 
     # Read state from /proc — fast, no extra tools needed
