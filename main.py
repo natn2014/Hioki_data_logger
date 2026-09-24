@@ -42,6 +42,10 @@ CSV_HEADERS = ["Timestamp", "Resistance", "Status", "Model",
                "Date", "Time", "DB_Status"]
 MODEL_CHANGE_LOG = "model_changes.csv"  # persistent record of every model switch
 SPEC_DECIMALS = 2  # decimal places for spec limits (entry, storage, and display)
+# Release mode: the auto-hold meter keeps returning the same held value long
+# after the probes are lifted, so blank the display to 0 once a value has
+# repeated this many polls (i.e. past the record point at consecutive_same == 2).
+HOLD_RELEASE_AFTER = 3
 
 # Serial hardware-hang recovery. A normal poll cycle is <=2 s (FETC? timeout) +
 # 0.5 s interval; if the worker's liveness stamp stops advancing for this long,
@@ -1587,13 +1591,18 @@ class MainWindow(QDialog):
                 if self.consecutive_same == 2:
                     record = True
 
-        # Update measurement display. A non-numeric reading (e.g. "OL") is also
-        # standby: hold the last value, or release to 0 when hold is toggled off.
-        try:
-            self.ui.doubleSpinBox_Measure.setValue(float(msg))
-        except ValueError:
-            if not self.hold_previous:
-                self.ui.doubleSpinBox_Measure.setValue(0.0)
+        # Update measurement display. In Release mode, a value that keeps
+        # repeating past the record point is the meter auto-holding a captured
+        # reading (standby) → blank to 0 without waiting for the eventual "OL".
+        # A non-numeric reading (e.g. "OL") is likewise standby.
+        if not self.hold_previous and self.consecutive_same >= HOLD_RELEASE_AFTER:
+            self.ui.doubleSpinBox_Measure.setValue(0.0)
+        else:
+            try:
+                self.ui.doubleSpinBox_Measure.setValue(float(msg))
+            except ValueError:
+                if not self.hold_previous:
+                    self.ui.doubleSpinBox_Measure.setValue(0.0)
 
         if record:
             # Judge against the current point's range when a sequence is active,
