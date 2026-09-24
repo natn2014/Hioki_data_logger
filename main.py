@@ -561,6 +561,10 @@ class MainWindow(QDialog):
         self.upper_limit = 1000.0
         self.cleaned_model = ""
         self.last_db_insert_time = None
+        # Measure-display behaviour in standby (probes lifted → meter reads
+        # over-range/OL). True = keep showing the last reading (default, as
+        # before); False = release the display to 0. Persisted in config.
+        self.hold_previous = True
 
         # Multi-point spec sequence for the current model. Empty list == the
         # legacy single-range behaviour (self.lower_limit / self.upper_limit).
@@ -673,8 +677,11 @@ class MainWindow(QDialog):
         self.btn_edit_spec = QPushButton("⚙ Edit Spec")
         # Force-uploads pending_uploads.json now, skipping the retry timer/backoff.
         self.btn_upload_now = QPushButton("⬆ Upload Now")
+        # Toggle: hold the last reading vs. release the display to 0 in standby.
+        self.btn_hold_toggle = QPushButton()
+        self.btn_hold_toggle.setCheckable(True)
         for b in (self.btn_reset_point, self.btn_new_model,
-                  self.btn_edit_spec, self.btn_upload_now):
+                  self.btn_edit_spec, self.btn_upload_now, self.btn_hold_toggle):
             b.setMinimumHeight(48)
             self.point_button_row.addWidget(b)
         self.ui.groupBox_Judge.layout().addLayout(self.point_button_row)
@@ -682,6 +689,8 @@ class MainWindow(QDialog):
         self.btn_new_model.clicked.connect(self.on_new_model_clicked)
         self.btn_edit_spec.clicked.connect(self.on_edit_spec_clicked)
         self.btn_upload_now.clicked.connect(self.on_upload_now_clicked)
+        self.btn_hold_toggle.toggled.connect(self.on_hold_toggle)
+        self._apply_hold_toggle_ui()   # reflect the (default) hold_previous state
         self._apply_point_to_ui()  # builds cards + sets initial enabled state
 
         # Check if there are pending uploads to retry
@@ -808,6 +817,7 @@ class MainWindow(QDialog):
                 with open(CONFIG_FILE, 'r') as f:
                     config = json.load(f)
                     self.cleaned_model = config.get("current_model", "")
+                    self.hold_previous = config.get("hold_previous", True)
                     models = config.get("models", {})
                     if self.cleaned_model and self.cleaned_model in models:
                         self.lower_limit = models[self.cleaned_model].get("lower_limit", 0.0)
@@ -840,6 +850,7 @@ class MainWindow(QDialog):
             self.log_model_change("STARTUP", "", self.cleaned_model, config_source)
 
         # Push loaded values into UI
+        self._apply_hold_toggle_ui()
         self.ui.pushButton_model.setText(self.cleaned_model if self.cleaned_model else "Model")
         self.ui.doubleSpinBox_lowerLimit.blockSignals(True)
         self.ui.doubleSpinBox_UpperLimit.blockSignals(True)
@@ -863,6 +874,7 @@ class MainWindow(QDialog):
 
             # Update current model and limits
             config["current_model"] = self.cleaned_model
+            config["hold_previous"] = self.hold_previous
             if "models" not in config:
                 config["models"] = {}
             if self.cleaned_model:
@@ -1103,6 +1115,34 @@ class MainWindow(QDialog):
         if self.spec_points:
             self.current_point_index = 0
             self._apply_point_to_ui()
+
+    def _apply_hold_toggle_ui(self):
+        """Sync the toggle button's checked state + label with hold_previous."""
+        self.btn_hold_toggle.blockSignals(True)
+        self.btn_hold_toggle.setChecked(self.hold_previous)
+        self.btn_hold_toggle.blockSignals(False)
+        if self.hold_previous:
+            self.btn_hold_toggle.setText("⏸ Hold Reading")
+            self.btn_hold_toggle.setStyleSheet(
+                "QPushButton{background:#2c3e50;color:white;border-radius:6px;}")
+        else:
+            self.btn_hold_toggle.setText("⤓ Release to 0")
+            self.btn_hold_toggle.setStyleSheet(
+                "QPushButton{background:#16a085;color:white;border-radius:6px;}")
+
+    def on_hold_toggle(self, checked):
+        """Toggle whether the measure display holds the last reading or releases
+        to 0 while the meter is in standby (probes lifted / over-range)."""
+        self.hold_previous = checked
+        self._apply_hold_toggle_ui()
+        mode = "hold last reading" if checked else "release to 0"
+        self.log_event(f"Measure display mode: {mode}")
+        self.append_log(f"Display mode → {mode}")
+        # In release mode, clear a stale held value immediately so the change is
+        # visible without waiting for the next standby poll.
+        if not checked:
+            self.ui.doubleSpinBox_Measure.setValue(0.0)
+        self.save_config()
 
     def on_point_card_tapped(self, index):
         """Operator tapped a point card — jump straight to that point."""
@@ -1521,11 +1561,14 @@ class MainWindow(QDialog):
         stable_eps = 1e-9
         try:
             current_val = float(msg)
-            # Ignore unrealistically high values
+            # Over-range == standby (probes lifted). Hold the last reading, or
+            # release the display to 0 when hold is toggled off.
             if abs(current_val) > MAX_VALID_OHMS:
                 self.consecutive_same = 0
                 self.previous_numeric = None
                 self.previous_raw = None
+                if not self.hold_previous:
+                    self.ui.doubleSpinBox_Measure.setValue(0.0)
                 return
             if self.previous_numeric is None or abs(current_val - self.previous_numeric) >= stable_eps:
                 self.previous_numeric = current_val
@@ -1544,11 +1587,13 @@ class MainWindow(QDialog):
                 if self.consecutive_same == 2:
                     record = True
 
-        # Update measurement display
+        # Update measurement display. A non-numeric reading (e.g. "OL") is also
+        # standby: hold the last value, or release to 0 when hold is toggled off.
         try:
             self.ui.doubleSpinBox_Measure.setValue(float(msg))
         except ValueError:
-            pass
+            if not self.hold_previous:
+                self.ui.doubleSpinBox_Measure.setValue(0.0)
 
         if record:
             # Judge against the current point's range when a sequence is active,
