@@ -1931,6 +1931,9 @@ class MainWindow(QDialog):
         path = os.path.join(app_dir, filename)
         if os.path.exists(path):
             self._media_player.stop()
+            # Clear first: with GStreamer, re-setting the same source is a no-op and
+            # the rewind seek fails, so a repeat play would jump straight to the end.
+            self._media_player.setSource(QUrl())
             self._media_player.setSource(QUrl.fromLocalFile(path))
             self._media_player.play()
 
