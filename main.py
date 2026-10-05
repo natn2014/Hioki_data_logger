@@ -32,6 +32,28 @@ from ui_UI_Resistance import Ui_Dialog
 from numpad_dialog import NumpadDialog
 from keyboard_dialog import KeyboardDialog
 from db_upload_manager import DBUploadManager, UploadSignals, SpecQueueManager
+from temp_correction import (
+    TempCorrectionTab, correct_resistance, normalize_tc_settings,
+    default_tc_settings, TEMP_STALE_S,
+)
+
+# RS485/Modbus ambient-temperature sensor (optional: needs pymodbus + matplotlib).
+try:
+    import rs485_temperature_monitor as rs485
+    _RS485_IMPORT_ERROR = ""
+except Exception as _e:  # missing pymodbus/matplotlib must not stop the app
+    rs485 = None
+    _RS485_IMPORT_ERROR = str(_e)
+
+TEMP_SENSOR_DEFAULTS = {
+    "enabled": True,
+    "port": rs485.SERIAL_PORT if rs485 else "/dev/ttyAMA0",
+    "baud": rs485.BAUDRATE if rs485 else 9600,
+    "slave_id": rs485.SLAVE_ID if rs485 else 1,
+    "register": rs485.REGISTER_ADDRESS if rs485 else 0,
+    "scale": rs485.SCALE if rs485 else 0.1,
+    "poll_interval": rs485.POLL_INTERVAL_SEC if rs485 else 1.0,
+}
 
 BAUD_RATE = 9600
 POLL_INTERVAL_MS = 500  # default polling interval for FETC?
@@ -147,8 +169,16 @@ class AutoDetectThread(QThread):
     found = Signal(str, str)  # port, idn
     not_found = Signal()
 
+    def __init__(self, exclude_ports=()):
+        super().__init__()
+        # Never probe these (e.g. the RS485 temperature sensor): writing *IDN?
+        # onto that bus would corrupt its Modbus traffic. Compared by real path
+        # so aliases like /dev/serial0 -> /dev/ttyAMA0 are caught too.
+        self.exclude = {os.path.realpath(p) for p in exclude_ports if p}
+
     def run(self):
-        ports = list(serial.tools.list_ports.comports())
+        ports = [p for p in serial.tools.list_ports.comports()
+                 if os.path.realpath(p.device) not in self.exclude]
         if not ports:
             self.not_found.emit()
             return
@@ -570,6 +600,18 @@ class MainWindow(QDialog):
         # before); False = release the display to 0. Persisted in config.
         self.hold_previous = True
 
+        # Temperature correction: per-model settings (models[m]["tc"]) plus the
+        # latest ambient temperature from the RS485 sensor.
+        self.tc = default_tc_settings()
+        self.tc_x_is_temp = True          # chart axis pref (global)
+        self.temp_sensor_cfg = dict(TEMP_SENSOR_DEFAULTS)
+        self.temp_thread = None
+        self.last_temp = None
+        self.last_temp_ts = 0.0
+        self._last_temp_error = ""
+        self._measure_title = None
+        self._tc_hist_date = None   # date of the CSV the histogram was loaded from
+
         # Multi-point spec sequence for the current model. Empty list == the
         # legacy single-range behaviour (self.lower_limit / self.upper_limit).
         self.spec_points = []           # [{seq, name, lower, upper}, ...] by Seq
@@ -626,6 +668,7 @@ class MainWindow(QDialog):
         self.init_ui()
         self.load_config()
         self.log_event("Application started")
+        self.start_temp_sensor()   # before auto-detect, which must skip its port
         self.start_auto_detect()
         self.run_schema_check()
 
@@ -695,6 +738,14 @@ class MainWindow(QDialog):
         self.btn_upload_now.clicked.connect(self.on_upload_now_clicked)
         self.btn_hold_toggle.toggled.connect(self.on_hold_toggle)
         self._apply_hold_toggle_ui()   # reflect the (default) hold_previous state
+
+        # Temperature Correction tab (QC Panel tab comes from the generated UI).
+        self.ui.tabWidget.tabBar().setStyleSheet(
+            "QTabBar::tab{min-height:44px;min-width:220px;padding:6px 18px;font-size:15pt;}")
+        self.tc_tab = TempCorrectionTab(self)
+        self.ui.tabWidget.addTab(self.tc_tab, "Temperature Correction")
+        self.tc_tab.settings_changed.connect(self.on_tc_settings_changed)
+        self.tc_tab.axis_changed.connect(self.on_tc_axis_changed)
         self._apply_point_to_ui()  # builds cards + sets initial enabled state
 
         # Check if there are pending uploads to retry
@@ -808,7 +859,7 @@ class MainWindow(QDialog):
         self.reconnect_delay = min(self.reconnect_delay * 1.5, self.max_reconnect_delay)  # Exponential backoff
         self.log_event(f"Auto-detect starting (reconnect delay: {self.reconnect_delay:.1f}s)")
         self._set_usb_status("connecting")
-        self.det_thread = AutoDetectThread()
+        self.det_thread = AutoDetectThread(exclude_ports=[self.temp_sensor_cfg["port"]])
         self.det_thread.found.connect(self.on_port_found)
         self.det_thread.not_found.connect(self.on_port_not_found)
         self.det_thread.start()
@@ -822,6 +873,11 @@ class MainWindow(QDialog):
                     config = json.load(f)
                     self.cleaned_model = config.get("current_model", "")
                     self.hold_previous = config.get("hold_previous", True)
+                    self.tc_x_is_temp = config.get("tc_x_is_temp", True)
+                    sensor = config.get("temp_sensor", {})
+                    if isinstance(sensor, dict):
+                        self.temp_sensor_cfg.update(
+                            {k: sensor[k] for k in TEMP_SENSOR_DEFAULTS if k in sensor})
                     models = config.get("models", {})
                     if self.cleaned_model and self.cleaned_model in models:
                         self.lower_limit = models[self.cleaned_model].get("lower_limit", 0.0)
@@ -879,13 +935,16 @@ class MainWindow(QDialog):
             # Update current model and limits
             config["current_model"] = self.cleaned_model
             config["hold_previous"] = self.hold_previous
+            config["tc_x_is_temp"] = self.tc_x_is_temp
             if "models" not in config:
                 config["models"] = {}
             if self.cleaned_model:
-                config["models"][self.cleaned_model] = {
+                # Merge, don't replace: the model entry also holds the cached
+                # point sequence ("points") and temperature-correction ("tc").
+                config["models"].setdefault(self.cleaned_model, {}).update({
                     "lower_limit": round(self.lower_limit, 3),
                     "upper_limit": round(self.upper_limit, 3)
-                }
+                })
 
             with open(CONFIG_FILE, 'w') as f:
                 json.dump(config, f, indent=2)
@@ -927,6 +986,7 @@ class MainWindow(QDialog):
         self.lower_limit = self.ui.doubleSpinBox_lowerLimit.value()
         self.upper_limit = self.ui.doubleSpinBox_UpperLimit.value()
         self.save_config()
+        self._update_tc_axis()
 
     def get_daily_csv_path(self, current_time):
         """Return CSV path named YYYYMMDD.csv in application directory."""
@@ -1041,6 +1101,8 @@ class MainWindow(QDialog):
         Empty result -> legacy single-range behaviour.
         """
         model = self.cleaned_model.strip()
+        self._load_model_tc(model)   # per-model temperature-correction settings
+        self._load_tc_history()      # today's readings for this model → histogram
         # Apply cached points at once (may be empty -> single-range mode).
         self.spec_points = self._load_cached_points(model) if model else []
         self.current_point_index = 0
@@ -1102,6 +1164,224 @@ class MainWindow(QDialog):
                 json.dump(config, f, indent=2)
         except Exception as e:
             print(f"Error caching points: {e}")
+
+    # ── Temperature correction (TC) ───────────────────────────────────────────
+
+    def _load_model_tc(self, model):
+        """Load a model's TC settings from config (defaults: OFF, 20 °C, 3930 ppm)."""
+        raw = None
+        if model:
+            try:
+                if os.path.exists(CONFIG_FILE):
+                    with open(CONFIG_FILE, 'r') as f:
+                        raw = json.load(f).get("models", {}).get(model, {}).get("tc")
+            except Exception as e:
+                print(f"Error loading TC settings: {e}")
+        self.tc = normalize_tc_settings(raw)
+        if not model:
+            self.tc["enabled"] = False   # TC is per model; nothing to apply to
+        self.tc_tab.set_model(model)
+        self.tc_tab.load_settings(self.tc["enabled"], self.tc["t0"], self.tc["alpha_ppm"])
+        self.tc_tab.set_axis_temperature_on_x(self.tc_x_is_temp)
+        self._update_measure_title()
+
+    def _save_model_tc(self, model, tc):
+        """Persist a model's TC settings (merged, like _cache_points)."""
+        try:
+            if os.path.exists(CONFIG_FILE):
+                with open(CONFIG_FILE, 'r') as f:
+                    config = json.load(f)
+            else:
+                config = {}
+            config.setdefault("models", {}).setdefault(model, {})
+            config["models"][model]["tc"] = tc
+            with open(CONFIG_FILE, 'w') as f:
+                json.dump(config, f, indent=2)
+        except Exception as e:
+            print(f"Error saving TC settings: {e}")
+
+    def on_tc_settings_changed(self, enabled, t0, alpha_ppm):
+        model = self.cleaned_model.strip()
+        if not model:
+            self.append_log("⚠ Set a model first — TC settings are saved per model")
+            self.tc_tab.load_settings(False, t0, alpha_ppm)
+            return
+        self.tc = normalize_tc_settings(
+            {"enabled": enabled, "t0": t0, "alpha_ppm": alpha_ppm})
+        self._save_model_tc(model, self.tc)
+        state = "ON" if self.tc["enabled"] else "OFF"
+        self.log_event(f"TC for '{model}': {state}, t0={self.tc['t0']:.1f} °C, "
+                       f"alpha={self.tc['alpha_ppm']} ppm/°C")
+        self.append_log(f"TC {state} — t₀ {self.tc['t0']:.1f} °C, "
+                        f"α {self.tc['alpha_ppm']} ppm/°C")
+        self._update_measure_title()
+
+    def on_tc_axis_changed(self, x_is_temp):
+        self.tc_x_is_temp = x_is_temp
+        self.save_config()
+
+    def _update_tc_axis(self):
+        """Fix the TC chart's resistance axis to the model's whole spec band, so
+        it doesn't move while the sequence auto-advances point to point."""
+        if getattr(self, "tc_tab", None) is None:
+            return  # a limit spinbox fired during startup, before the tab exists
+        if self.spec_points:
+            lo = min(p["lower"] for p in self.spec_points)
+            hi = max(p["upper"] for p in self.spec_points)
+            spec = [{"seq": p["seq"], "name": p["name"],
+                     "lower": p["lower"], "upper": p["upper"]} for p in self.spec_points]
+        else:
+            lo, hi = self.lower_limit, self.upper_limit
+            spec = [{"seq": None, "name": "All readings", "lower": lo, "upper": hi}]
+        self.tc_tab.set_spec_range(lo, hi)
+        model = self.cleaned_model.strip()
+        self.tc_tab.set_hist_spec(spec, f"Today · {model}" if model else "Today")
+
+    def _load_tc_history(self):
+        """Fill the TC-tab histogram with today's recorded values for the model.
+
+        Parsed by column position so old (pre multi-point) daily files and files
+        that mix both layouts work: Resistance and Model are columns 1 and 3 in
+        both; Point/Seq (4/5) exist only in full-width rows."""
+        if getattr(self, "tc_tab", None) is None:
+            return
+        model = self.cleaned_model.strip()
+        now = datetime.now()
+        self._tc_hist_date = now.date()
+        rows = []
+        path = self.get_daily_csv_path(now)
+        if model and os.path.exists(path):
+            try:
+                with open(path, newline="", encoding="utf-8") as f:
+                    for r in csv.reader(f):
+                        if len(r) < 4 or r[0] == "Timestamp" or r[3].strip() != model:
+                            continue
+                        try:
+                            value = float(r[1])
+                        except ValueError:
+                            continue
+                        seq = name = None
+                        if len(r) >= len(CSV_HEADERS):
+                            name = r[4] or None
+                            try:
+                                seq = int(r[5]) if r[5] != "" else None
+                            except ValueError:
+                                seq = None
+                        rows.append((seq, name, value))
+            except Exception as e:
+                self.log_event(f"Histogram: could not read {os.path.basename(path)}: {e}")
+        self.tc_tab.set_history(rows)
+
+    def _temp_is_fresh(self):
+        return (self.last_temp is not None
+                and time.time() - self.last_temp_ts <= TEMP_STALE_S)
+
+    def _tc_value(self, rt):
+        """Value to judge/record for a raw reading Rt: (value, note).
+
+        value is None when TC is ON but cannot be applied — the caller must then
+        NOT record, since a raw Rt stored in the same Resistance column would be
+        indistinguishable from a corrected one."""
+        if not self.tc["enabled"]:
+            return rt, ""
+        if not self._temp_is_fresh():
+            return None, "no fresh temperature from the sensor"
+        t0, alpha = self.tc["t0"], self.tc["alpha_ppm"]
+        rt0 = correct_resistance(rt, self.last_temp, t0, alpha)
+        if rt0 is None:
+            return None, "invalid correction (1 + α(t − t₀) ≤ 0)"
+        return rt0, f"Rt {rt:.3f} Ω @ {self.last_temp:.1f} °C → {t0:.1f} °C"
+
+    def _display_resistance(self, rt):
+        """What the big Measured number shows: Rt0 when TC applies, else Rt."""
+        if self.tc["enabled"] and self._temp_is_fresh():
+            rt0 = correct_resistance(rt, self.last_temp, self.tc["t0"], self.tc["alpha_ppm"])
+            if rt0 is not None:
+                return rt0
+        return rt
+
+    def _update_measure_title(self):
+        """Measured title = active point (if a sequence) + TC state (if on)."""
+        point = self.current_point()
+        if point is not None:
+            idx, n = self.current_point_index + 1, len(self.spec_points)
+            title = (f"Measured — {point['name']} "
+                     f"({point['lower']:.{SPEC_DECIMALS}f}–{point['upper']:.{SPEC_DECIMALS}f}Ω)  {idx}/{n}")
+        else:
+            title = "Measured"
+        if self.tc["enabled"]:
+            title += (f"  → {self.tc['t0']:.1f} °C (TC)" if self._temp_is_fresh()
+                      else "  (TC: no temperature!)")
+        if title != self._measure_title:
+            self._measure_title = title
+            self.ui.groupBox_MeasureValue.setTitle(title)
+
+    # ── RS485 temperature sensor ──────────────────────────────────────────────
+
+    def start_temp_sensor(self):
+        cfg = self.temp_sensor_cfg
+        if not cfg.get("enabled", True):
+            self.tc_tab.set_sensor_status("disabled in config")
+            return
+        if rs485 is None:
+            self.tc_tab.set_sensor_status("unavailable (pymodbus/matplotlib missing)")
+            self.log_event(f"Temperature sensor unavailable: {_RS485_IMPORT_ERROR}")
+            return
+        try:
+            self.temp_thread = rs485.ModbusReaderThread(
+                port=cfg["port"], baudrate=int(cfg["baud"]),
+                slave_id=int(cfg["slave_id"]), register_address=int(cfg["register"]),
+                register_count=1, scale=float(cfg["scale"]),
+                poll_interval=float(cfg["poll_interval"]),
+            )
+        except Exception as e:
+            self.tc_tab.set_sensor_status(f"config error: {e}")
+            self.log_event(f"Temperature sensor config error: {e}")
+            return
+        self.temp_thread.reading.connect(self.on_temp_reading)
+        self.temp_thread.status.connect(self.tc_tab.set_sensor_status)
+        self.temp_thread.error.connect(self.on_temp_error)
+        self.temp_thread.start()
+        self.log_event(f"Temperature sensor started on {cfg['port']} "
+                       f"(slave {cfg['slave_id']}, reg {cfg['register']}, x{cfg['scale']})")
+
+    def stop_temp_sensor(self):
+        if self.temp_thread is not None:
+            self.temp_thread.stop()
+            self.temp_thread.wait(2000)
+            self.temp_thread = None
+
+    def on_temp_reading(self, ts, temperature_c):
+        self.last_temp = temperature_c
+        self.last_temp_ts = ts
+        self._last_temp_error = ""
+        self.tc_tab.set_temperature(temperature_c, ts)
+        self._update_measure_title()
+
+    def simulate_temperature(self):
+        """Ctrl+T: type an ambient temperature by hand (no sensor attached, e.g.
+        developing on Windows). It goes through the same path as a real reading
+        and goes stale after TEMP_STALE_S like one, so it can't linger in
+        production if pressed by accident."""
+        start = self.last_temp if self.last_temp is not None else 25.0
+        dlg = NumpadDialog(current_value=start, decimals=1,
+                           title="Simulated ambient temperature t (°C)",
+                           min_val=-40.0, max_val=125.0, parent=self,
+                           allow_negative=True)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            t = dlg.get_value()
+            self.on_temp_reading(time.time(), t)
+            self.tc_tab.set_sensor_status("SIMULATED (Ctrl+T)")
+            self.log_event(f"Simulated temperature: {t:.1f} °C")
+            self.append_log(f"Simulated temperature t = {t:.1f} °C "
+                            f"(valid {int(TEMP_STALE_S)} s)")
+
+    def on_temp_error(self, message):
+        # The reader retries every few seconds; only log when the error changes.
+        if message != self._last_temp_error:
+            self._last_temp_error = message
+            self.log_event(f"Temperature sensor: {message}")
+        self._update_measure_title()
 
     def current_point(self):
         """Return the active point dict, or None when no sequence is loaded."""
@@ -1215,13 +1495,8 @@ class MainWindow(QDialog):
             self.ui.doubleSpinBox_UpperLimit.setValue(point["upper"])
             self.ui.doubleSpinBox_lowerLimit.blockSignals(False)
             self.ui.doubleSpinBox_UpperLimit.blockSignals(False)
-            idx, n = self.current_point_index + 1, len(self.spec_points)
-            self.ui.groupBox_MeasureValue.setTitle(
-                f"Measured — {point['name']} "
-                f"({point['lower']:.{SPEC_DECIMALS}f}–{point['upper']:.{SPEC_DECIMALS}f}Ω)  {idx}/{n}"
-            )
-        else:
-            self.ui.groupBox_MeasureValue.setTitle("Measured")
+        self._update_measure_title()   # point info + TC state in one title
+        self._update_tc_axis()
 
     # ── Register / edit a model spec (writes resistance_spec) ─────────────────
 
@@ -1405,6 +1680,10 @@ class MainWindow(QDialog):
                 return
             elif key == Qt.Key.Key_F:
                 self.set_judgement_status(False)
+                event.accept()
+                return
+            elif key == Qt.Key.Key_T:
+                self.simulate_temperature()
                 event.accept()
                 return
         if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
@@ -1595,26 +1874,44 @@ class MainWindow(QDialog):
         # repeating past the record point is the meter auto-holding a captured
         # reading (standby) → blank to 0 without waiting for the eventual "OL".
         # A non-numeric reading (e.g. "OL") is likewise standby.
+        try:
+            rt_val = float(msg)
+        except ValueError:
+            rt_val = None
+        if rt_val is not None:
+            self.tc_tab.set_rt(rt_val)      # live Rt for the TC tab / chart
+        self._update_measure_title()
+
         if not self.hold_previous and self.consecutive_same >= HOLD_RELEASE_AFTER:
             self.ui.doubleSpinBox_Measure.setValue(0.0)
-        else:
-            try:
-                self.ui.doubleSpinBox_Measure.setValue(float(msg))
-            except ValueError:
-                if not self.hold_previous:
-                    self.ui.doubleSpinBox_Measure.setValue(0.0)
+        elif rt_val is not None:
+            # Shows Rt0 when temperature correction applies, otherwise raw Rt.
+            self.ui.doubleSpinBox_Measure.setValue(self._display_resistance(rt_val))
+        elif not self.hold_previous:
+            self.ui.doubleSpinBox_Measure.setValue(0.0)
 
         if record:
+            # Temperature correction: judge and record Rt0 instead of Rt. When TC
+            # is ON but can't be applied (no fresh temperature), don't record.
+            judge_value, tc_note = msg, ""
+            if rt_val is not None:
+                judge_value, tc_note = self._tc_value(rt_val)
+                if judge_value is None:
+                    self.log_event(f"TC: reading {msg} NOT recorded — {tc_note}")
+                    self.append_log(f"[{time_str}] ⚠ TC on — {tc_note}; reading not recorded")
+                    self.set_judgement_status(None)
+                    return
+
             # Judge against the current point's range when a sequence is active,
             # otherwise fall back to the single lower/upper limits.
             point = self.current_point()
             if point is not None:
                 p_name, p_seq = point["name"], point["seq"]
                 p_lower, p_upper = point["lower"], point["upper"]
-                pass_result, result_text = self.compare_spec(msg, p_lower, p_upper)
+                pass_result, result_text = self.compare_spec(judge_value, p_lower, p_upper)
             else:
                 p_name = p_seq = p_lower = p_upper = None
-                pass_result, result_text = self.compare_spec(msg)
+                pass_result, result_text = self.compare_spec(judge_value)
             cleaned_model = self.cleaned_model.strip()
 
             current_time = datetime.now()
@@ -1643,7 +1940,8 @@ class MainWindow(QDialog):
                 status_for_db = "N/A"
 
             try:
-                resistance_value = round(float(msg), 3)
+                # With TC on this is Rt0, stored in the existing Resistance column.
+                resistance_value = round(float(judge_value), 3)
             except ValueError:
                 resistance_value = msg
 
@@ -1652,6 +1950,11 @@ class MainWindow(QDialog):
                                     cleaned_model, point=p_name, seq=p_seq,
                                     lower=p_lower, upper=p_upper, db_status="pending")
                 csv_status = "(CSV: ✓)"
+                # Histogram mirrors today's CSV: new day → start from the new file.
+                if self._tc_hist_date != current_time.date():
+                    self._load_tc_history()
+                elif isinstance(resistance_value, (int, float)):
+                    self.tc_tab.add_reading(p_seq, p_name, resistance_value)
             except Exception as e:
                 csv_status = f"(CSV Error: {e})"
                 print(f"CSV write error: {e}")
@@ -1676,7 +1979,8 @@ class MainWindow(QDialog):
                 print(f"DEBUG: Waiting for 10s interval - last insert was {(current_time - self.last_db_insert_time).total_seconds():.1f}s ago")
 
             point_tag = f"[{p_name}] " if p_name else ""
-            log_line = f"{time_str}  {point_tag}{msg}  {result_text}  {csv_status}  {db_status}"
+            shown = f"{resistance_value} Ω [TC: {tc_note}]" if tc_note else msg
+            log_line = f"{time_str}  {point_tag}{shown}  {result_text}  {csv_status}  {db_status}"
             self.append_log(log_line)
 
             # Update judgement indicator
@@ -1900,6 +2204,7 @@ class MainWindow(QDialog):
             self.wifi_thread.stop()
             self.wifi_thread.wait(3000)
             self.wifi_thread = None
+        self.stop_temp_sensor()
         # Stop poll thread and wait for clean exit before closing the serial port
         if self.poll_thread is not None:
             self.poll_thread.stop()

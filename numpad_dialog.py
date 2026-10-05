@@ -14,12 +14,14 @@ def _screen_scale():
 
 class NumpadDialog(QDialog):
     def __init__(self, current_value=0.0, decimals=3, title="Enter Value",
-                 min_val=None, max_val=None, parent=None):
+                 min_val=None, max_val=None, parent=None, allow_negative=False):
         super().__init__(parent)
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.decimals = decimals
         self.min_val = min_val
         self.max_val = max_val
+        # Adds a ± key; off by default so existing (positive-only) callers are unchanged.
+        self.allow_negative = allow_negative
         self._value_str = f"{current_value:.{decimals}f}"
         self._is_fresh = True  # first keypress clears the pre-loaded value
         self._scale = _screen_scale()
@@ -89,6 +91,17 @@ class NumpadDialog(QDialog):
             btn.clicked.connect(lambda checked, l=lbl: self._on_key(l))
             grid.addWidget(btn, row, col)
 
+        if self.allow_negative:
+            sign_btn = QPushButton("±")
+            sign_btn.setFont(btn_font)
+            sign_btn.setMinimumHeight(self._px(70))
+            sign_btn.setStyleSheet(
+                "QPushButton{background:#8e44ad;color:white;border-radius:8px;}"
+                "QPushButton:pressed{background:#9b59b6;}"
+            )
+            sign_btn.clicked.connect(lambda checked: self._on_key('±'))
+            grid.addWidget(sign_btn, 4, 0, 1, 3)
+
         outer.addLayout(grid)
 
         act = QHBoxLayout()
@@ -117,16 +130,29 @@ class NumpadDialog(QDialog):
         self.setMinimumWidth(self._px(360))
 
     def _on_key(self, key):
+        if key == '±':
+            # Flip the sign of whatever is shown (pre-loaded value included).
+            # Freshness is kept, so "± then 5" gives -5 and "±, OK" negates.
+            if self._value_str.startswith('-'):
+                self._value_str = self._value_str[1:]
+            else:
+                self._value_str = '-' + self._value_str
+            self.display.setText(self._value_str or '0')
+            return
+        if key == '.' and self.decimals == 0:
+            return  # integer-only entry
+
         if self._is_fresh:
-            self._value_str = ''
+            # First key replaces the pre-loaded value, but keeps a sign set by ±.
+            self._value_str = '-' if self._value_str.startswith('-') else ''
             self._is_fresh = False
 
         if key == '<':
             self._value_str = self._value_str[:-1]
         elif key == '.':
             if '.' not in self._value_str:
-                if not self._value_str:
-                    self._value_str = '0.'
+                if self._value_str in ('', '-'):
+                    self._value_str += '0.'
                 else:
                     self._value_str += '.'
         else:

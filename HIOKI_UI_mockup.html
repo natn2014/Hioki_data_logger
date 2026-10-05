@@ -361,6 +361,88 @@
   .sql-pre .str { color: var(--pass); }
   .sql-pre .d { color: var(--ink-faint); }
 
+  /* ── Chart series colours (dataviz palette slots 1-2, validated per theme
+        against this page's own panel surface) ─────────────────────────────── */
+  :root { --s-std: #3987e5; --s-act: #d95926; }
+  @media (prefers-color-scheme: light) { :root { --s-std: #2a78d6; --s-act: #eb6834; } }
+  :root[data-theme="dark"]  { --s-std: #3987e5; --s-act: #d95926; }
+  :root[data-theme="light"] { --s-std: #2a78d6; --s-act: #eb6834; }
+  /* Histogram seq colours (slots aqua, violet, yellow, magenta, green — in this
+     order no adjacent pair falls below the CVD floor; validated per theme). */
+  :root { --q1:#199e70; --q2:#9085e9; --q3:#c98500; --q4:#d55181; --q5:#008300; --q-other:#74858f; }
+  @media (prefers-color-scheme: light) {
+    :root { --q1:#1baf7a; --q2:#4a3aa7; --q3:#eda100; --q4:#e87ba4; --q5:#008300; --q-other:#8a8984; }
+  }
+  :root[data-theme="dark"]  { --q1:#199e70; --q2:#9085e9; --q3:#c98500; --q4:#d55181; --q5:#008300; --q-other:#74858f; }
+  :root[data-theme="light"] { --q1:#1baf7a; --q2:#4a3aa7; --q3:#eda100; --q4:#e87ba4; --q5:#008300; --q-other:#8a8984; }
+  .chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  @media (max-width: 1180px) { .chart-grid { grid-template-columns: 1fr; } }
+  .hist-title { font-size: 12.5px; color: var(--ink-dim); font-weight: 600; }
+  .hist-legend { margin: 2px 0 4px; gap: 6px 14px; }
+  .lg-sq { width: 11px; height: 11px; border-radius: 2px; }
+
+  /* ── QC additions: Upload Now / Hold toggle / N-A / held value ─────────── */
+  .btn-row { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  .obtn.release { border-color: var(--accent); color: var(--accent-hi);
+    background: color-mix(in srgb, var(--accent) 12%, var(--panel-3)); }
+  .judge.na { background: color-mix(in srgb, var(--warn) 14%, var(--panel)); color: var(--warn);
+    border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
+  .value.held { color: var(--ink-dim); text-shadow: none; }
+  .measure .head .tctag { font-family: var(--mono); color: var(--accent-hi); font-size: 11.5px; }
+  .measure .head .tctag.warn { color: var(--warn); }
+
+  /* ── Temperature Correction tab ───────────────────────────────────────── */
+  .tc { display: grid; grid-template-columns: minmax(0,1fr) 340px; gap: 16px; align-items: start; }
+  @media (max-width: 940px) { .tc { grid-template-columns: 1fr; } }
+  .tc-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .tc-head h2 { font-size: 16px; margin: 0; font-weight: 650; }
+  .tc-head .tc-model { font-family: var(--mono); color: var(--accent-hi); }
+  .tc-switch {
+    margin-left: auto; font-family: var(--sans); font-size: 14px; font-weight: 700; cursor: pointer;
+    padding: 10px 16px; border-radius: 10px; border: 1px solid var(--edge);
+    background: var(--panel-3); color: var(--ink-dim); min-height: 44px;
+  }
+  .tc-switch.on { background: color-mix(in srgb, var(--pass) 18%, var(--panel)); color: var(--pass);
+    border-color: color-mix(in srgb, var(--pass) 55%, transparent); }
+  .tc-set { display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; align-items: end; }
+  .tc-set .field { margin: 0; }
+  .tc-cards { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; }
+  @media (max-width: 620px) { .tc-cards { grid-template-columns: 1fr; } .tc-set { grid-template-columns: 1fr 1fr; } }
+  .tc-card { background: var(--panel-3); border: 1px solid var(--edge-soft); border-radius: 12px; padding: 10px 14px; min-width: 0; }
+  .tc-card .k { font-size: 11px; letter-spacing: .7px; text-transform: uppercase; color: var(--ink-faint); }
+  .tc-card .v { font-family: var(--mono); font-weight: 700; font-size: clamp(24px, 3vw, 36px);
+    font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .tc-card .s { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); min-height: 15px; }
+  .tc-card .s.warn { color: var(--warn); }
+  .tc-card.result { border-color: color-mix(in srgb, var(--s-std) 70%, transparent);
+    background: color-mix(in srgb, var(--s-std) 10%, var(--panel-3)); }
+  .formula { font-family: var(--mono); font-size: 13px; color: var(--ink); line-height: 1.6;
+    background: var(--bg); border: 1px solid var(--edge-soft); border-radius: 8px; padding: 9px 12px; overflow-x: auto; }
+  .formula .d { color: var(--ink-faint); }
+  .chart-card { background: var(--panel); border: 1px solid var(--edge-soft); border-radius: 12px; padding: 10px 12px; }
+  .chart-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12.5px; color: var(--ink-dim); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .lg-dot { width: 11px; height: 11px; border-radius: 50%; background: var(--s-act); }
+  .lg-dia { width: 10px; height: 10px; background: var(--s-std); transform: rotate(45deg); }
+  .lg-line { width: 22px; border-top: 2px dashed var(--ink-faint); }
+  .chart-wrap { position: relative; }
+  svg.tcchart { width: 100%; height: auto; display: block; }
+  .tip {
+    position: absolute; pointer-events: none; z-index: 3; white-space: nowrap;
+    background: var(--panel-2); border: 1px solid var(--edge); border-radius: 8px;
+    padding: 7px 10px; font-family: var(--mono); font-size: 12px; color: var(--ink);
+    box-shadow: 0 8px 24px -8px var(--shadow); transform: translate(-50%, calc(-100% - 12px));
+  }
+  .tip[hidden] { display: none; }
+  .tip .tk { color: var(--ink-faint); }
+  .sym { text-transform: none; letter-spacing: 0; }
+  .tc-rules { margin: 0; padding-left: 18px; font-size: 12px; color: var(--ink-dim); line-height: 1.6; }
+  .tc-rules b { color: var(--ink); }
+  .slider-line { display: flex; align-items: center; gap: 10px; padding: 8px 0 4px; }
+  .slider-line input[type=range] { flex: 1; accent-color: var(--accent); }
+  .slider-line .sv { font-family: var(--mono); font-weight: 700; min-width: 64px; text-align: right; }
+
   @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 </style>
 
@@ -376,6 +458,7 @@
   <nav class="tabs" role="tablist">
     <button class="tab active" id="tabBtnQc" type="button" role="tab">QC Panel</button>
     <button class="tab" id="tabBtnReg" type="button" role="tab">＋ Register Model</button>
+    <button class="tab" id="tabBtnTc" type="button" role="tab">🌡 Temperature Correction</button>
   </nav>
 
   <div class="tabpanel" id="tabQc" role="tabpanel">
@@ -400,7 +483,7 @@
       <div class="measure-row">
         <div class="measure">
           <div class="head">
-            <span>Measured — <span class="pt" id="ptName">A-B</span></span>
+            <span>Measured — <span class="pt" id="ptName">A-B</span> <span class="tctag" id="tcTag"></span></span>
             <span class="prog" id="ptProg">point 1 / 3</span>
           </div>
           <div class="value" id="value">-.---<span class="unit">Ω</span></div>
@@ -427,6 +510,8 @@
         <button class="obtn" id="btnReset" type="button">⟲ Reset to first point</button>
         <button class="obtn" id="btnNewModel" type="button">＋ New Model</button>
         <button class="obtn" id="btnEditSpec" type="button">⚙ Edit Spec</button>
+        <button class="obtn" id="btnUploadNow" type="button">⬆ Upload Now</button>
+        <button class="obtn" id="btnHold" type="button" title="Hold the last reading, or release the display to 0 in standby">⏸ Hold Reading</button>
       </div>
 
       <div class="log-box">
@@ -546,6 +631,116 @@
       </aside>
     </div>
   </div><!-- /tabReg -->
+
+  <!-- ═══ TEMPERATURE CORRECTION ═══ -->
+  <div class="tabpanel" id="tabTc" role="tabpanel" hidden>
+    <div class="tc">
+      <section class="device" aria-label="Temperature correction">
+        <div class="tc-head">
+          <h2>Temperature correction · <span class="tc-model" id="tcModel">500D</span></h2>
+          <button class="tc-switch" id="tcEnable" type="button" aria-pressed="false">TC: OFF — judging on Rt</button>
+        </div>
+
+        <div class="tc-set">
+          <div class="field">
+            <label for="tcT0">Standard temperature <span class="sym">t₀</span> (°C) · −10.0 … 99.9</label>
+            <input id="tcT0" type="number" step="0.1" min="-10" max="99.9" value="20.0">
+          </div>
+          <div class="field">
+            <label for="tcAlpha">Temperature coefficient <span class="sym">α</span> (<span class="sym">ppm/°C</span>) · −9999 … 9999</label>
+            <input id="tcAlpha" type="number" step="1" min="-9999" max="9999" value="3930">
+          </div>
+          <button class="ghost-btn" id="tcDefaults" type="button">⟲ Defaults</button>
+        </div>
+
+        <div class="tc-cards">
+          <div class="tc-card">
+            <div class="k">Measured · <span class="sym">Rt</span> (Ω)</div>
+            <div class="v" id="tcRt">—</div>
+            <div class="s" id="tcRtSrc">from HIOKI FETC?</div>
+          </div>
+          <div class="tc-card">
+            <div class="k">Ambient · <span class="sym">t</span> (°C)</div>
+            <div class="v" id="tcT">—</div>
+            <div class="s" id="tcSensor">sensor: waiting…</div>
+          </div>
+          <div class="tc-card result">
+            <div class="k">Corrected · <span class="sym">Rt₀</span> (Ω)</div>
+            <div class="v" id="tcRt0">—</div>
+            <div class="s" id="tcRt0Note">at t₀</div>
+          </div>
+        </div>
+
+        <div class="formula" id="tcFormula"></div>
+
+        <div class="chart-grid">
+        <div class="chart-card">
+          <div class="chart-top">
+            <div class="legend" aria-hidden="true">
+              <span><i class="lg-dot"></i>Actual (t, Rt)</span>
+              <span><i class="lg-dia"></i>Standard (t₀, Rt₀)</span>
+              <span><i class="lg-line"></i>R(T) at α</span>
+            </div>
+            <button class="mini-btn" id="tcAxis" type="button">X: Temperature · Y: Resistance ⇄</button>
+          </div>
+          <div class="chart-wrap">
+            <svg class="tcchart" id="tcChart" viewBox="0 0 640 320" role="img" aria-label="Resistance versus temperature"></svg>
+            <div class="tip" id="tcTip" hidden></div>
+          </div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-top">
+            <span class="hist-title" id="histTitle">Today</span>
+          </div>
+          <div class="legend hist-legend" id="histLegend"></div>
+          <div class="chart-wrap">
+            <svg class="tcchart" id="histChart" viewBox="0 0 640 320" role="img" aria-label="Resistance histogram by seq"></svg>
+            <div class="tip" id="histTip" hidden></div>
+          </div>
+        </div>
+        </div>
+
+        <ul class="tc-rules">
+          <li><b>TC ON:</b> PASS/FAIL is judged on <b>Rt₀</b>, and Rt₀ is written into the existing <code>Resistance</code> column (no new DB columns).</li>
+          <li>No fresh temperature (older than 10 s) → the reading is <b>not recorded</b>; judgement shows N/A.</li>
+          <li>t₀ / α / ON-OFF are saved <b>per model</b> and follow the Model button.</li>
+        </ul>
+      </section>
+
+      <aside class="sim" aria-label="Temperature sensor simulator">
+        <div class="block">
+          <h2><span class="tag">SIM</span> RS485 temperature sensor</h2>
+          <div class="toggle-line">
+            <span class="tl"><span class="t1">Sensor link</span><span class="t2">Modbus RTU · /dev/ttyAMA0 · slave 1</span></span>
+            <label class="sw"><input type="checkbox" id="swTemp" checked><span class="track"></span><span class="knob"></span></label>
+          </div>
+          <div class="slider-line">
+            <span class="t1" style="font-size:13.5px">Ambient</span>
+            <input type="range" id="tempSlider" min="10" max="45" step="0.1" value="26.4" aria-label="Simulated ambient temperature">
+            <span class="sv" id="tempSliderVal">26.4 °C</span>
+          </div>
+          <button class="mini-btn" id="tcSample" type="button">Use a sample reading (mid-spec)</button>
+          <p class="hint">On the real station this is the RS485 sensor (or <code>Ctrl+T</code> to type a
+            temperature while developing without one).</p>
+        </div>
+
+        <div class="block">
+          <h2><span class="tag">RS485</span> read_holding_registers</h2>
+          <div class="feed" id="mbfeed"></div>
+        </div>
+
+        <div class="block">
+          <h2><span class="tag">MATH</span> Conversion</h2>
+          <pre class="sql-pre">Rt₀ = Rt / (1 + α·(t − t₀))
+
+α in ppm/°C → ×1e-6
+3930 ppm/°C = copper</pre>
+          <p class="hint">Turn the <b>Sensor link</b> off with TC ON and start measuring on the
+            QC Panel: after 10 s the temperature goes stale and readings are refused.</p>
+        </div>
+      </aside>
+    </div>
+  </div><!-- /tabTc -->
 </div>
 
 <script>
@@ -563,6 +758,24 @@
   var MODEL = "500D";
   var POINTS = [];  // active model's points, filled by loadModel()
 
+  // Per-model temperature correction (would be models[m]["tc"] in config).
+  var TC_DEFAULT = { enabled: false, t0: 20.0, alpha: 3930 };
+  var TEMP_STALE_MS = 10000;
+  var TEMP_AXIS = [0, 50];   // fixed temperature axis (°C)
+  // Fixed resistance axis for a model: its whole spec (all points) plus padding,
+  // so it doesn't move while the sequence auto-advances.
+  function specRange(model) {
+    var pts = registry[model] || [];
+    if (!pts.length) { return [0, 10]; }
+    var lo = Math.min.apply(null, pts.map(function (p) { return p.lower; }));
+    var hi = Math.max.apply(null, pts.map(function (p) { return p.upper; }));
+    var pad = Math.max((hi - lo) * 0.25, hi * 0.05, 0.001);
+    return [Math.max(0, lo - pad), hi + pad];
+  }
+  var tcSettings = {};
+  // Simulated RS485 sensor (would be ModbusReaderThread).
+  var sensor = { link: true, target: 26.4, t: null, ts: 0 };
+
   // Load a registered model as the active QC spec (mirrors load_model_spec).
   function loadModel(name) {
     if (!registry[name]) { return; }
@@ -573,6 +786,7 @@
     state.idx = 0; state.results = {};
     $("modelName").textContent = name;
     applyPoint(); setJudge(null);
+    renderTC();
   }
 
   var $ = function (id) { return document.getElementById(id); };
@@ -580,7 +794,9 @@
     running: false, usb: true, db: true, forceFail: false,
     idx: 0, phase: "idle", phaseTick: 0, target: null, shown: null,
     rows: 0, queue: 0, readings: 0, results: {}, chipsSig: null,
-    specQueue: {}   // simulated pending_specs.csv — {model: [points]}
+    specQueue: {},  // simulated pending_specs.csv — {model: [points]}
+    hold: true,     // Hold Reading (true) vs Release to 0 (false)
+    lastShown: null, lastRt: null, xIsTemp: true
   };
 
   // ── Small helpers ─────────────────────────────────────────────────────────
@@ -658,7 +874,8 @@
   function setJudge(kind) {
     var j = $("judge");
     j.className = "judge" + (kind ? " " + kind + " flash" : "");
-    j.textContent = kind === "pass" ? "PASS" : kind === "fail" ? "FAIL" : "— — —";
+    j.textContent = kind === "pass" ? "PASS" : kind === "fail" ? "FAIL" :
+      kind === "na" ? "N/A" : "— — —";
     setTimeout(function () { j.classList.remove("flash"); }, 360);
   }
 
@@ -676,21 +893,40 @@
 
   // ── The measurement record (judge → log → DB → advance) ───────────────────
   function record(p, value) {
-    var pass = value >= p.lower && value <= p.upper;
+    // Temperature correction: judge and record Rt0 instead of Rt. TC ON but no
+    // fresh temperature -> do NOT record (mirrors _tc_value in main.py).
+    var tc = tcFor(MODEL), judged = value, tcNote = "";
+    if (tc.enabled) {
+      var r0 = tempFresh() ? correct(value, sensor.t, tc.t0, tc.alpha) : null;
+      if (r0 === null) {
+        setValue(fmt(value), "settling", "TC on — no fresh temperature · NOT recorded");
+        setJudge("na");
+        deviceLog('<span class="d">' + now() + '</span>  <span class="a">[' + p.name + ']</span>  ' +
+          '<span class="r">⚠ TC on — no fresh temperature; ' + fmt(value) + ' Ω not recorded</span>');
+        return;
+      }
+      judged = +r0.toFixed(3);
+      tcNote = '  <span class="d">[TC: Rt ' + fmt(value) + ' @ ' + sensor.t.toFixed(1) +
+        ' °C → ' + tc.t0.toFixed(1) + ' °C]</span>';
+    }
+    var pass = judged >= p.lower && judged <= p.upper;
     var status = pass ? "OK" : "NG";
     state.results[p.name] = status;
     state.readings++;
+    state.lastShown = judged;
     $("logCount").textContent = state.readings + (state.readings === 1 ? " reading" : " readings");
 
-    setValue(fmt(value), pass ? "pass" : "fail", "stable · recorded");
+    setValue(fmt(judged), pass ? "pass" : "fail", "stable · recorded" + (tc.enabled ? " (Rt₀)" : ""));
     setJudge(pass ? "pass" : "fail");
 
     var badge = pass ? '<span class="g">OK</span>' : '<span class="r">NG</span>';
     deviceLog('<span class="d">' + now() + '</span>  <span class="a">[' + p.name + ']</span>  <b>' +
-      fmt(value) + ' Ω</b>  ' + badge +
-      '  <span class="d">(' + fmt(p.lower) + '–' + fmt(p.upper) + ')</span>');
+      fmt(judged) + ' Ω</b>  ' + badge +
+      '  <span class="d">(' + fmt(p.lower) + '–' + fmt(p.upper) + ')</span>' + tcNote);
 
-    uploadRow(p, value, status);
+    uploadRow(p, judged, status);
+    histAdd(MODEL, p.seq, judged);
+    if (!$("tabTc").hidden) { renderTC(); }
     buildSeq();
 
     // Auto-advance to the next point, wrapping to the first.
@@ -742,9 +978,16 @@
     var p = POINTS[state.idx];
 
     if (state.phase === "idle" || state.phase === "seek") {
-      // leads not yet on the pad — meter reads over-range
+      // Leads not on the pad yet: the meter reads over-range. What the APP shows
+      // depends on Hold/Release (over-range is never written to the display).
       state.phase = "seek"; state.phaseTick++;
-      setValue("O·L", "settling", "probing " + p.name + " …");
+      if (state.lastShown === null) {
+        setValue("-.---", "settling", "probing " + p.name + " …");
+      } else if (state.hold) {
+        setValue(fmt(state.lastShown), "held", "standby · holding last reading · probe " + p.name);
+      } else {
+        setValue("0.000", "held", "standby · released to 0 · probe " + p.name);
+      }
       feed('<span class="d">FETC? →</span> +9.99999E+37 <span class="d">(OL)</span>');
       if (state.phaseTick >= 2) {
         state.target = pickTarget(p);
@@ -756,7 +999,8 @@
       state.shown += (state.target - state.shown) * 0.55;
       var jitter = (Math.random() - 0.5) * 0.03;
       var disp = state.shown + jitter;
-      setValue(fmt(disp), "settling", "settling …");
+      liveRt(disp);
+      setValue(fmt(displayVal(disp)), "settling", "settling …");
       feed('<span class="d">FETC? →</span> ' + fmt(disp));
       if (Math.abs(state.shown - state.target) < 0.02 && state.phaseTick >= 2) {
         state.phase = "hold"; state.phaseTick = 0;
@@ -764,12 +1008,20 @@
     } else if (state.phase === "hold") {
       // two matching stable reads → record (matches consecutive_same == 2)
       state.phaseTick++;
-      setValue(fmt(state.target), "", "HOLD · stable");
+      liveRt(state.target);
+      setValue(fmt(displayVal(state.target)), "", "HOLD · stable");
       feed('<span class="g">FETC? →</span> ' + fmt(state.target) + ' <span class="d">stable</span>');
       if (state.phaseTick >= 2) {
         record(p, state.target);
-        state.phase = "seek"; state.phaseTick = 0; // operator lifts probe, moves on
+        state.phase = "held"; state.phaseTick = 0;
       }
+    } else if (state.phase === "held") {
+      // HOLD:AUTO keeps returning the captured value after the probe lifts.
+      // Release mode blanks it once it repeats past the record point.
+      state.phaseTick++;
+      feed('<span class="d">FETC? →</span> ' + fmt(state.target) + ' <span class="d">(auto-hold)</span>');
+      if (!state.hold) { setValue("0.000", "held", "auto-hold · released to 0"); }
+      if (state.phaseTick >= 3) { state.phase = "seek"; state.phaseTick = 0; }
     }
   }
 
@@ -878,14 +1130,426 @@
   });
 
   // ═══ Tabs ═══════════════════════════════════════════════════════════════
+  var TABS = { qc: ["tabQc", "tabBtnQc"], reg: ["tabReg", "tabBtnReg"], tc: ["tabTc", "tabBtnTc"] };
   function showTab(which) {
-    var qc = which === "qc";
-    $("tabQc").hidden = !qc; $("tabReg").hidden = qc;
-    $("tabBtnQc").classList.toggle("active", qc);
-    $("tabBtnReg").classList.toggle("active", !qc);
+    Object.keys(TABS).forEach(function (k) {
+      var on = k === which;
+      $(TABS[k][0]).hidden = !on;
+      $(TABS[k][1]).classList.toggle("active", on);
+    });
+    if (which === "tc") { renderTC(); }
   }
   $("tabBtnQc").addEventListener("click", function () { showTab("qc"); });
   $("tabBtnReg").addEventListener("click", function () { showTab("reg"); });
+  $("tabBtnTc").addEventListener("click", function () { showTab("tc"); });
+
+  // ═══ Upload Now + Hold/Release (QC panel) ═══════════════════════════════
+  $("btnUploadNow").addEventListener("click", function () {
+    var specs = Object.keys(state.specQueue).length;
+    if (state.queue === 0 && specs === 0) {
+      deviceLog('<span class="d">' + now() + '</span>  Upload Now — queue already empty');
+      return;
+    }
+    if (!state.db) {
+      deviceLog('<span class="d">' + now() + '</span>  <span class="r">Upload Now — server unreachable, ' +
+        state.queue + ' record(s) kept safe in the queue</span>');
+      return;
+    }
+    deviceLog('<span class="d">' + now() + '</span>  <span class="a">⬆ Uploading ' + state.queue +
+      ' pending record(s) now…</span>');
+    flushQueue(); flushSpecQueue();
+  });
+  function renderHold() {
+    var b = $("btnHold");
+    b.textContent = state.hold ? "⏸ Hold Reading" : "⤓ Release to 0";
+    b.classList.toggle("release", !state.hold);
+  }
+  $("btnHold").addEventListener("click", function () {
+    state.hold = !state.hold;
+    renderHold();
+    deviceLog('<span class="d">' + now() + '</span>  display mode → ' +
+      (state.hold ? "hold last reading" : "release to 0"));
+  });
+
+  // ═══ Temperature correction ═════════════════════════════════════════════
+  function correct(rt, t, t0, alphaPpm) {
+    var denom = 1 + alphaPpm * 1e-6 * (t - t0);
+    return denom > 0 ? rt / denom : null;
+  }
+  function tcFor(model) {
+    if (!tcSettings[model]) {
+      tcSettings[model] = { enabled: TC_DEFAULT.enabled, t0: TC_DEFAULT.t0, alpha: TC_DEFAULT.alpha };
+    }
+    return tcSettings[model];
+  }
+  function tempFresh() { return sensor.t !== null && Date.now() - sensor.ts <= TEMP_STALE_MS; }
+  // Big Measured number: Rt0 when TC applies, otherwise raw Rt (_display_resistance).
+  function displayVal(rt) {
+    var tc = tcFor(MODEL);
+    if (tc.enabled && tempFresh()) {
+      var r0 = correct(rt, sensor.t, tc.t0, tc.alpha);
+      if (r0 !== null) { return r0; }
+    }
+    return rt;
+  }
+  function liveRt(rt) { state.lastRt = rt; if (!$("tabTc").hidden) { renderTC(); } }
+  function updateTcTag() {
+    var tc = tcFor(MODEL), tag = $("tcTag");
+    if (!tc.enabled) { tag.textContent = ""; tag.className = "tctag"; }
+    else if (tempFresh()) { tag.textContent = "→ " + tc.t0.toFixed(1) + " °C (TC)"; tag.className = "tctag"; }
+    else { tag.textContent = "TC: no temperature!"; tag.className = "tctag warn"; }
+  }
+
+  function renderTC() {
+    var tc = tcFor(MODEL);
+    updateTcTag();
+    $("tcModel").textContent = MODEL;
+    var sw = $("tcEnable");
+    sw.classList.toggle("on", tc.enabled);
+    sw.setAttribute("aria-pressed", tc.enabled ? "true" : "false");
+    sw.textContent = tc.enabled ? "TC: ON — judging on Rt₀" : "TC: OFF — judging on Rt";
+    if (document.activeElement !== $("tcT0")) { $("tcT0").value = tc.t0.toFixed(1); }
+    if (document.activeElement !== $("tcAlpha")) { $("tcAlpha").value = tc.alpha; }
+
+    var rt = state.lastRt, t = sensor.t;
+    $("tcRt").textContent = rt === null ? "—" : fmt(rt);
+    $("tcT").textContent = t === null ? "—" : t.toFixed(1);
+    var age = t === null ? null : Math.floor((Date.now() - sensor.ts) / 1000);
+    var sEl = $("tcSensor");
+    sEl.textContent = "sensor: " + (sensor.link ? "connected" : "no response") +
+      (age === null ? "" : " · " + age + " s ago" + (tempFresh() ? "" : " ⚠ stale"));
+    sEl.className = "s" + (tempFresh() ? "" : " warn");
+
+    var a = tc.alpha * 1e-6;
+    var r0 = (rt === null || t === null) ? null : correct(rt, t, tc.t0, tc.alpha);
+    var f = $("tcFormula");
+    if (rt === null || t === null) {
+      $("tcRt0").textContent = "—";
+      f.innerHTML = 'Rt₀ = Rt / (1 + α·(t − t₀)) <span class="d">— waiting for a reading and a temperature…</span>';
+    } else if (r0 === null) {
+      $("tcRt0").textContent = "invalid";
+      f.innerHTML = '1 + α·(t − t₀) ≤ 0 <span class="d">→ cannot correct; check α and t₀</span>';
+    } else {
+      $("tcRt0").textContent = fmt(r0);
+      f.innerHTML = 'Rt₀ = Rt / (1 + α·(t − t₀)) = ' + fmt(rt) + ' / (1 + ' + a.toFixed(6) +
+        ' × (' + t.toFixed(1) + ' − ' + tc.t0.toFixed(1) + ')) = <b>' + fmt(r0) + ' Ω</b>';
+    }
+    $("tcRt0Note").textContent = "at t₀ = " + tc.t0.toFixed(1) + " °C";
+    $("tcAxis").textContent = state.xIsTemp ? "X: Temperature · Y: Resistance ⇄"
+                                            : "X: Resistance · Y: Temperature ⇄";
+    drawChart(rt, t, tc, r0);
+    drawHist();
+  }
+
+  // "Nice" axis ticks (1/2/5 steps).
+  function niceTicks(lo, hi, n) {
+    var span = hi - lo || 1, raw = span / n, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    var step = [1, 2, 5, 10].map(function (m) { return m * mag; })
+      .find(function (v) { return v >= raw; });
+    var out = [], v = Math.ceil(lo / step) * step;
+    for (; v <= hi + step * 1e-9; v += step) { out.push(+v.toFixed(10)); }
+    return { ticks: out, step: step };
+  }
+  function decFor(step) { return Math.max(0, Math.min(4, -Math.floor(Math.log10(step)))); }
+
+  function drawChart(rt, t, tc, r0) {
+    var svg = $("tcChart");
+    // Draw at the element's real pixel width so text never scales with the box.
+    var W = Math.max(360, Math.round(svg.getBoundingClientRect().width || 640));
+    var H = 320, L = 66, R = 18, T = 16, B = 46;
+    svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+    $("tcTip").hidden = true;
+    if (rt === null || t === null || r0 === null) {
+      svg.innerHTML = '<text x="' + W / 2 + '" y="' + H / 2 + '" text-anchor="middle" ' +
+        'style="fill:var(--ink-faint);font:13px var(--sans)">' +
+        (r0 === null && rt !== null && t !== null ? "Cannot correct: 1 + α·(t − t₀) ≤ 0"
+          : "Waiting for a reading and a temperature…") + '</text>';
+      svg.setAttribute("aria-label", "Resistance versus temperature: no data yet");
+      return;
+    }
+    var a = tc.alpha * 1e-6;
+    // Fixed axes: temperature TEMP_AXIS, resistance from the model's spec.
+    // They only stretch if a value falls outside, so points never go off-chart.
+    function cover(range, vals) {
+      var lo = Math.min.apply(null, [range[0]].concat(vals));
+      var hi = Math.max.apply(null, [range[1]].concat(vals));
+      var p = (lo < range[0] || hi > range[1]) ? (hi - lo) * 0.05 : 0;
+      return [lo < range[0] ? lo - p : lo, hi > range[1] ? hi + p : hi];
+    }
+    var td = cover(TEMP_AXIS, [t, tc.t0]);
+    var rd = cover(specRange(MODEL), [rt, r0]);
+    var temps = [td[0], td[1]];
+    var res = temps.map(function (T_) { return r0 * (1 + a * (T_ - tc.t0)); });
+    // Map (temperature, resistance) to data-space (x, y) per the axis choice.
+    function dx(T_, R_) { return state.xIsTemp ? T_ : R_; }
+    function dy(T_, R_) { return state.xIsTemp ? R_ : T_; }
+    var xs = [dx(temps[0], res[0]), dx(temps[1], res[1]), dx(t, rt), dx(tc.t0, r0)];
+    var ys = [dy(temps[0], res[0]), dy(temps[1], res[1]), dy(t, rt), dy(tc.t0, r0)];
+    var xd = state.xIsTemp ? td : rd, yd = state.xIsTemp ? rd : td;
+    var xt = niceTicks(xd[0], xd[1], Math.max(4, Math.round(W / 110))), yt = niceTicks(yd[0], yd[1], 5);
+    function X(v) { return L + (v - xd[0]) / (xd[1] - xd[0]) * (W - L - R); }
+    function Y(v) { return H - B - (v - yd[0]) / (yd[1] - yd[0]) * (H - T - B); }
+    var xLbl = state.xIsTemp ? "Temperature (°C)" : "Resistance (Ω)";
+    var yLbl = state.xIsTemp ? "Resistance (Ω)" : "Temperature (°C)";
+    var g = "";
+    xt.ticks.forEach(function (v) {
+      if (v < xd[0] || v > xd[1]) { return; }
+      g += '<line x1="' + X(v) + '" x2="' + X(v) + '" y1="' + T + '" y2="' + (H - B) +
+        '" style="stroke:var(--edge-soft)"/>' +
+        '<text x="' + X(v) + '" y="' + (H - B + 16) + '" text-anchor="middle" class="tk">' +
+        v.toFixed(decFor(xt.step)) + '</text>';
+    });
+    yt.ticks.forEach(function (v) {
+      if (v < yd[0] || v > yd[1]) { return; }
+      g += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + Y(v) + '" y2="' + Y(v) +
+        '" style="stroke:var(--edge-soft)"/>' +
+        '<text x="' + (L - 8) + '" y="' + (Y(v) + 4) + '" text-anchor="end" class="tk">' +
+        v.toFixed(decFor(yt.step)) + '</text>';
+    });
+    g += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + (H - B) + '" y2="' + (H - B) + '" style="stroke:var(--edge)"/>';
+    g += '<text x="' + ((L + W - R) / 2) + '" y="' + (H - 8) + '" text-anchor="middle" class="al">' + xLbl + '</text>';
+    g += '<text transform="translate(16,' + ((T + H - B) / 2) + ') rotate(-90)" text-anchor="middle" class="al">' + yLbl + '</text>';
+    // Characteristic line R(T) through both points.
+    g += '<clipPath id="tcClip"><rect x="' + L + '" y="' + T + '" width="' + (W - L - R) +
+      '" height="' + (H - T - B) + '"/></clipPath>';
+    g += '<line clip-path="url(#tcClip)" x1="' + X(xs[0]) + '" y1="' + Y(ys[0]) + '" x2="' + X(xs[1]) + '" y2="' + Y(ys[1]) +
+      '" style="stroke:var(--ink-faint);stroke-width:2;stroke-dasharray:6 5"/>';
+    var ax = X(xs[2]), ay = Y(ys[2]), sx = X(xs[3]), sy = Y(ys[3]);
+    // Marks: a 2px surface ring keeps overlapping marks separable.
+    g += '<circle cx="' + ax + '" cy="' + ay + '" r="7" style="fill:var(--s-act);stroke:var(--panel);stroke-width:2"/>';
+    g += '<rect x="' + (sx - 6) + '" y="' + (sy - 6) + '" width="12" height="12" transform="rotate(45 ' + sx + ' ' + sy +
+      ')" style="fill:var(--s-std);stroke:var(--panel);stroke-width:2"/>';
+    // Direct labels go in the quadrant the line does NOT pass through:
+    // rising line -> upper point labelled up-left, lower point down-right.
+    function label(px, py, hs, vs, l1, l2) {
+      var LW = 150, x = px + hs * 12;
+      if (hs < 0 && x - LW < L) { hs = 1; x = px + 12; }
+      if (hs > 0 && x + LW > W - R) { hs = -1; x = px - 12; }
+      var anchor = hs < 0 ? "end" : "start";
+      var y1 = vs < 0 ? py - 22 : py + 20, y2 = y1 + 14;
+      return '<text x="' + x + '" y="' + y1 + '" text-anchor="' + anchor + '" class="pl">' + l1 + '</text>' +
+             '<text x="' + x + '" y="' + y2 + '" text-anchor="' + anchor + '" class="pv">' + l2 + '</text>';
+    }
+    var actualUpper = ay <= sy;
+    var ux = actualUpper ? ax : sx, lx = actualUpper ? sx : ax;
+    var rising = ux >= lx;          // higher point sits to the right
+    var hsUpper = rising ? -1 : 1, hsLower = -hsUpper;
+    var aTxt = t.toFixed(1) + " °C · " + fmt(rt) + " Ω", sTxt = tc.t0.toFixed(1) + " °C · " + fmt(r0) + " Ω";
+    g += label(ax, ay, actualUpper ? hsUpper : hsLower, actualUpper ? -1 : 1, "Actual", aTxt);
+    g += label(sx, sy, actualUpper ? hsLower : hsUpper, actualUpper ? 1 : -1, "Standard", sTxt);
+    // Hover hit targets, larger than the marks.
+    g += '<circle class="hit" data-k="act" cx="' + ax + '" cy="' + ay + '" r="18" style="fill:transparent;cursor:pointer"/>';
+    g += '<circle class="hit" data-k="std" cx="' + sx + '" cy="' + sy + '" r="18" style="fill:transparent;cursor:pointer"/>';
+    g = '<style>.tk{fill:var(--ink-dim);font:11px var(--mono)}.al{fill:var(--ink-dim);font:12px var(--sans)}' +
+        '.pl{fill:var(--ink-dim);font:600 11px var(--sans)}.pv{fill:var(--ink);font:12px var(--mono)}</style>' + g;
+    svg.innerHTML = g;
+    svg.setAttribute("aria-label", "Actual " + t.toFixed(1) + " °C, " + fmt(rt) + " Ω; standard " +
+      tc.t0.toFixed(1) + " °C, " + fmt(r0) + " Ω");
+
+    var tips = {
+      act: '<b>Actual (t, Rt)</b><br><span class="tk">t </span>' + t.toFixed(1) + ' °C<br><span class="tk">Rt </span>' + fmt(rt) + ' Ω',
+      std: '<b>Standard (t₀, Rt₀)</b><br><span class="tk">t₀ </span>' + tc.t0.toFixed(1) + ' °C<br><span class="tk">Rt₀ </span>' + fmt(r0) + ' Ω'
+    };
+    svg.querySelectorAll(".hit").forEach(function (h) {
+      h.addEventListener("mouseenter", function () {
+        var tip = $("tcTip"), k = h.getAttribute("data-k");
+        var sc = svg.getBoundingClientRect().width / W;   // ~1 now; kept for safety
+        tip.innerHTML = tips[k];
+        tip.style.left = (+h.getAttribute("cx") * sc) + "px";
+        tip.style.top = (+h.getAttribute("cy") * sc) + "px";
+        tip.hidden = false;
+      });
+      h.addEventListener("mouseleave", function () { $("tcTip").hidden = true; });
+    });
+  }
+
+  var rsTimer = null;
+  window.addEventListener("resize", function () {
+    clearTimeout(rsTimer);
+    rsTimer = setTimeout(function () { if (!$("tabTc").hidden) { renderTC(); } }, 120);
+  });
+
+  // ═══ Histogram: today's judged values per seq (mirrors the daily CSV) ═══
+  var hist = {};   // model -> {seq: [values]}
+  function histFor(m) { return hist[m] || (hist[m] = {}); }
+  function histAdd(m, seq, v) { var h = histFor(m); (h[seq] = h[seq] || []).push(v); }
+  function gauss(mu, sd) {
+    var u = 1 - Math.random(), v = Math.random();
+    return mu + sd * Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  }
+  // Simulated "today's CSV" for 500D, so the histogram has data at load time.
+  function seedHistory() {
+    registry["500D"].forEach(function (p, i) {
+      var mu = (p.lower + p.upper) / 2, sd = (p.upper - p.lower) / 7;
+      for (var k = 0; k < 36; k++) { histAdd("500D", i + 1, +gauss(mu, sd).toFixed(3)); }
+    });
+  }
+  function qcol(seq) {
+    return seq >= 1 && seq <= 5 ? "var(--q" + seq + ")" : "var(--q-other)";
+  }
+  function coverRange(range, vals) {
+    if (!vals.length) { return range.slice(); }
+    var lo = Math.min.apply(null, [range[0]].concat(vals));
+    var hi = Math.max.apply(null, [range[1]].concat(vals));
+    var p = (lo < range[0] || hi > range[1]) ? (hi - lo) * 0.05 : 0;
+    return [lo < range[0] ? lo - p : lo, hi > range[1] ? hi + p : hi];
+  }
+
+  function drawHist() {
+    var svg = $("histChart");
+    var W = Math.max(320, Math.round(svg.getBoundingClientRect().width || 640));
+    var H = 320, L = 48, R = 14, T = 16, B = 46, BINS = 30;
+    svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+    $("histTip").hidden = true;
+    var h = histFor(MODEL);
+    var seqs = Object.keys(h).map(Number).sort(function (a, b) { return a - b; });
+    var all = [];
+    seqs.forEach(function (q) { all = all.concat(h[q]); });
+    $("histTitle").textContent = "Today · " + MODEL + " · n = " + all.length +
+      "  (judged values" + (tcFor(MODEL).enabled ? " — Rt₀" : "") + ")";
+
+    // Legend: name, seq, n and mean (visible labels — several seq colours are
+    // below 3:1 on the light surface, so identity never rests on colour alone).
+    $("histLegend").innerHTML = seqs.map(function (q) {
+      var v = h[q], mean = v.reduce(function (a, b) { return a + b; }, 0) / v.length;
+      var nm = (POINTS[q - 1] && POINTS[q - 1].seq === q) ? POINTS[q - 1].name : "seq " + q;
+      return '<span><i class="lg-sq" style="background:' + qcol(q) + '"></i>' + esc(nm) +
+        ' (seq ' + q + ') · n=' + v.length + ' · x̄ ' + mean.toFixed(3) + '</span>';
+    }).join("");
+
+    var xd = coverRange(specRange(MODEL), all);
+    function X(v) { return L + (v - xd[0]) / (xd[1] - xd[0]) * (W - L - R); }
+    if (!all.length) {
+      svg.innerHTML = '<text x="' + W / 2 + '" y="' + H / 2 + '" text-anchor="middle" ' +
+        'style="fill:var(--ink-faint);font:13px var(--sans)">No readings today for this model yet</text>';
+      return;
+    }
+    var bw = (xd[1] - xd[0]) / BINS;
+    var stacks = [];                 // per bin: [{seq, n, y0}]
+    var tops = new Array(BINS).fill(0);
+    seqs.forEach(function (q) {
+      var c = new Array(BINS).fill(0);
+      h[q].forEach(function (v) {
+        c[Math.min(BINS - 1, Math.max(0, Math.floor((v - xd[0]) / bw)))]++;
+      });
+      c.forEach(function (n, i) {
+        if (!n) { return; }
+        (stacks[i] = stacks[i] || []).push({ seq: q, n: n, y0: tops[i] });
+        tops[i] += n;
+      });
+    });
+    var ymax = Math.max.apply(null, tops);
+    var yt = niceTicks(0, ymax * 1.15, 5);
+    if (yt.step < 1) { yt = { ticks: [], step: 1 }; for (var k = 0; k <= Math.ceil(ymax * 1.15); k++) yt.ticks.push(k); }
+    var yTop = yt.ticks[yt.ticks.length - 1] || 1;
+    function Y(v) { return H - B - v / yTop * (H - T - B); }
+
+    var g = '<style>.tk{fill:var(--ink-dim);font:11px var(--mono)}.al{fill:var(--ink-dim);font:12px var(--sans)}</style>';
+    yt.ticks.forEach(function (v) {
+      g += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + Y(v) + '" y2="' + Y(v) + '" style="stroke:var(--edge-soft)"/>' +
+        '<text x="' + (L - 8) + '" y="' + (Y(v) + 4) + '" text-anchor="end" class="tk">' + v + '</text>';
+    });
+    var xt = niceTicks(xd[0], xd[1], Math.max(4, Math.round(W / 110)));
+    xt.ticks.forEach(function (v) {
+      if (v < xd[0] || v > xd[1]) { return; }
+      g += '<text x="' + X(v) + '" y="' + (H - B + 16) + '" text-anchor="middle" class="tk">' +
+        v.toFixed(decFor(xt.step)) + '</text>';
+    });
+    g += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + (H - B) + '" y2="' + (H - B) + '" style="stroke:var(--edge)"/>';
+    g += '<text x="' + ((L + W - R) / 2) + '" y="' + (H - 8) + '" text-anchor="middle" class="al">Resistance (Ω) — judged value</text>';
+    g += '<text transform="translate(14,' + ((T + H - B) / 2) + ') rotate(-90)" text-anchor="middle" class="al">Count</text>';
+    // Each seq's spec limits: thin dashed lines in the seq colour.
+    POINTS.forEach(function (p) {
+      [p.lower, p.upper].forEach(function (v) {
+        if (v < xd[0] || v > xd[1]) { return; }
+        g += '<line x1="' + X(v) + '" x2="' + X(v) + '" y1="' + T + '" y2="' + (H - B) +
+          '" style="stroke:' + qcol(p.seq) + ';stroke-width:1.2;stroke-dasharray:5 4;opacity:.8"/>';
+      });
+    });
+    // Stacked bars; a 1.5px surface stroke gives the gap between segments.
+    stacks.forEach(function (st, i) {
+      if (!st) { return; }
+      st.forEach(function (sg) {
+        var x0 = X(xd[0] + i * bw), x1 = X(xd[0] + (i + 1) * bw);
+        var yA = Y(sg.y0 + sg.n), yB = Y(sg.y0);
+        g += '<rect class="hb" data-seq="' + sg.seq + '" data-n="' + sg.n + '" data-lo="' + (xd[0] + i * bw).toFixed(3) +
+          '" data-hi="' + (xd[0] + (i + 1) * bw).toFixed(3) + '" x="' + x0 + '" y="' + yA + '" width="' + Math.max(1, x1 - x0) +
+          '" height="' + Math.max(0, yB - yA) + '" style="fill:' + qcol(sg.seq) + ';stroke:var(--panel);stroke-width:1.5;cursor:pointer"/>';
+      });
+    });
+    svg.innerHTML = g;
+    svg.setAttribute("aria-label", "Resistance histogram for " + MODEL + ": " + seqs.map(function (q) {
+      return "seq " + q + " n=" + h[q].length; }).join(", "));
+
+    svg.querySelectorAll(".hb").forEach(function (r) {
+      r.addEventListener("mouseenter", function () {
+        var q = +r.getAttribute("data-seq"), tip = $("histTip");
+        var nm = (POINTS[q - 1] && POINTS[q - 1].seq === q) ? POINTS[q - 1].name : "seq " + q;
+        var sc = svg.getBoundingClientRect().width / W;
+        tip.innerHTML = '<b>' + esc(nm) + ' (seq ' + q + ')</b><br><span class="tk">count </span>' +
+          r.getAttribute("data-n") + '<br><span class="tk">range </span>' + r.getAttribute("data-lo") +
+          '–' + r.getAttribute("data-hi") + ' Ω';
+        tip.style.left = ((+r.getAttribute("x") + +r.getAttribute("width") / 2) * sc) + "px";
+        tip.style.top = (+r.getAttribute("y") * sc) + "px";
+        tip.hidden = false;
+      });
+      r.addEventListener("mouseleave", function () { $("histTip").hidden = true; });
+    });
+  }
+
+  // TC controls (per model)
+  $("tcEnable").addEventListener("click", function () {
+    var tc = tcFor(MODEL);
+    tc.enabled = !tc.enabled;
+    deviceLog('<span class="d">' + now() + '</span>  TC ' + (tc.enabled ? "ON" : "OFF") + ' for <b>' + MODEL +
+      '</b> <span class="d">(t₀ ' + tc.t0.toFixed(1) + ' °C, α ' + tc.alpha + ' ppm/°C)</span>');
+    renderTC();
+  });
+  function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
+  $("tcT0").addEventListener("change", function (e) {
+    var v = parseFloat(e.target.value);
+    if (!isNaN(v)) { tcFor(MODEL).t0 = +clamp(v, -10, 99.9).toFixed(1); }
+    e.target.blur(); renderTC();
+  });
+  $("tcAlpha").addEventListener("change", function (e) {
+    var v = parseFloat(e.target.value);
+    if (!isNaN(v)) { tcFor(MODEL).alpha = Math.round(clamp(v, -9999, 9999)); }
+    e.target.blur(); renderTC();
+  });
+  $("tcDefaults").addEventListener("click", function () {
+    var tc = tcFor(MODEL); tc.t0 = TC_DEFAULT.t0; tc.alpha = TC_DEFAULT.alpha; renderTC();
+  });
+  $("tcAxis").addEventListener("click", function () { state.xIsTemp = !state.xIsTemp; renderTC(); });
+  // Sample Rt: middle of the active point's spec, so it sits on the fixed axes.
+  $("tcSample").addEventListener("click", function () {
+    var p = POINTS[state.idx];
+    state.lastRt = +((p.lower + p.upper) / 2).toFixed(3);
+    renderTC();
+  });
+
+  // Simulated RS485 sensor: one Modbus read per second (raw register x 0.1).
+  function mbFeed(h) { prepend($("mbfeed"), h); }
+  $("swTemp").addEventListener("change", function (e) {
+    sensor.link = e.target.checked;
+    mbFeed(sensor.link ? '<span class="g">link restored</span>'
+                       : '<span class="r">link lost</span> <span class="d">— no Modbus replies</span>');
+  });
+  $("tempSlider").addEventListener("input", function (e) {
+    sensor.target = parseFloat(e.target.value);
+    $("tempSliderVal").textContent = sensor.target.toFixed(1) + " °C";
+  });
+  function sensorTick() {
+    if (sensor.link) {
+      var raw = Math.round((sensor.target + (Math.random() - 0.5) * 0.1) * 10);
+      sensor.t = raw / 10; sensor.ts = Date.now();
+      mbFeed('<span class="d">slave 1 reg 0 →</span> ' + raw + ' <span class="d">×0.1 =</span> <span class="a">' +
+        sensor.t.toFixed(1) + ' °C</span>');
+    } else {
+      mbFeed('<span class="r">timeout</span> <span class="d">— retry in 3 s</span>');
+    }
+    updateTcTag();
+    if (!$("tabTc").hidden) { renderTC(); }
+  }
 
   // ═══ Register-model tab ═════════════════════════════════════════════════
   function esc(s) {
@@ -1097,5 +1761,12 @@
   refreshReg();
   renderSpecQueue();
   regLog('<span class="g">ready</span> <span class="d">— resistance_spec (Model, Seq, PointName, LowerLimit, UpperLimit)</span>');
+
+  // Temperature sensor + TC tab
+  seedHistory();
+  renderHold();
+  sensorTick();
+  setInterval(sensorTick, 1000);
+  renderTC();
 })();
 </script>

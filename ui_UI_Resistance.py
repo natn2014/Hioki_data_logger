@@ -15,7 +15,7 @@ from PySide6.QtGui import (QBrush, QColor, QConicalGradient, QCursor, QFont,
     QRadialGradient)
 from PySide6.QtWidgets import (QAbstractSpinBox, QDoubleSpinBox, QFrame,
     QGroupBox, QHBoxLayout, QLabel, QListView, QPushButton, QSizePolicy,
-    QVBoxLayout)
+    QTabWidget, QVBoxLayout, QWidget)
 
 
 class Ui_Dialog(object):
@@ -31,7 +31,13 @@ class Ui_Dialog(object):
         # Data Log (relocated to the far right for at-a-glance visibility).
         self.mainLayout = QHBoxLayout(Dialog)
         self.mainLayout.setObjectName(u"mainLayout")
-        self.verticalLayout = QVBoxLayout()
+        # Left column lives on the "QC Panel" tab; main.py adds more tabs
+        # (e.g. Temperature Correction). The Data Log stays visible on the right.
+        self.tabWidget = QTabWidget(Dialog)
+        self.tabWidget.setObjectName(u"tabWidget")
+        self.tab_qc = QWidget()
+        self.tab_qc.setObjectName(u"tab_qc")
+        self.verticalLayout = QVBoxLayout(self.tab_qc)
         self.verticalLayout.setObjectName(u"verticalLayout")
 
         # ── Status bar (connection + model button) ────────────────────────────
@@ -184,8 +190,9 @@ class Ui_Dialog(object):
         self.listView_logger.setObjectName(u"listView_logger")
         self.verticalLayout_6.addWidget(self.listView_logger)
 
-        # Compose the split: controls left (stretch 3), Data Log right (stretch 2).
-        self.mainLayout.addLayout(self.verticalLayout, 3)
+        # Compose the split: tabs left (stretch 3), Data Log right (stretch 1).
+        self.tabWidget.addTab(self.tab_qc, u"QC Panel")
+        self.mainLayout.addWidget(self.tabWidget, 3)
         self.mainLayout.addWidget(self.groupBox, 1)
 
         self.retranslateUi(Dialog)

@@ -10,6 +10,7 @@ A Python GUI application that reads resistance measurements from HIOKI multimete
 - **In-app model registration** — a touchscreen dialog registers a new model or edits an existing spec; on confirm it writes the point sequence to the `resistance_spec` table
 - **Point cards** — tappable cards let the operator jump directly to any point in the sequence (touch-friendly alternative to Prev/Next)
 - **On-screen keyboard & numpad** — full QWERTY keyboard (with a Shift toggle) for model/point names and a numeric keypad for limits; both accept USB barcode-scanner input
+- **Temperature Correction (TC)** — an RS485 ambient-temperature sensor corrects each reading to a standard temperature (`Rt₀ = Rt / (1 + α·(t − t₀))`); per-model t₀/α, PASS/FAIL judged on Rt₀, live chart of the actual vs. standard point
 - **Hold / Release display toggle** — choose whether the big measurement value **holds** the last reading in standby (probes lifted) or **releases to 0**; the choice persists across restarts
 - **Audio feedback** — plays a Thai-language voice alert on every PASS (`ResistancePass_TH.mp3`) or FAIL (`ResistanceOver_TH.mp3`)
 - **Barcode scanner input** — USB HID scanner auto-sets the active model; all entry methods share the same unified decode logic (AIM Code 39 Extended, `$`-delimited, and plain text)
@@ -165,8 +166,9 @@ Two keyboard shortcuts let you test the PASS/FAIL sounds without a connected HIO
 |---|---|
 | **Ctrl+P** | Simulate PASS — green button + plays `ResistancePass_TH.mp3` |
 | **Ctrl+F** | Simulate FAIL — red button + plays `ResistanceOver_TH.mp3` |
+| **Ctrl+T** | Type a **simulated ambient temperature** (no sensor attached) — feeds the Temperature Correction tab; goes stale after 10 s like a real reading |
 
-Both shortcuts work at any time while the application is running.
+These shortcuts work at any time while the application is running.
 
 ## Setting the Model
 
@@ -241,6 +243,87 @@ A live reading always overwrites the display on the next poll, so switching mode
 loses a real measurement. The choice is saved in `gui_mode5_config.json` (`hold_previous`)
 and restored on startup.
 
+## Temperature Correction (TC)
+
+The **Temperature Correction** tab converts the resistance measured at the ambient
+temperature into its value at a standard temperature — the same TC function as the HIOKI
+meter, done in the app with an external temperature sensor:
+
+```
+Rt₀ = Rt / (1 + α_t₀ · (t − t₀))        α in ppm/°C  (3930 ppm/°C = 0.003930 /°C)
+```
+
+| Symbol | Meaning | Source / range |
+|---|---|---|
+| `Rt` | Measured resistance (Ω) | HIOKI `FETC?` |
+| `t` | Current ambient temperature (°C) | RS485 temperature sensor |
+| `t₀` | Standard temperature (°C) | per model, −10.0 … 99.9 (default 20.0) |
+| `α_t₀` | Temperature coefficient at t₀ (ppm/°C) | per model, −9999 … 9999 (default 3930 = copper) |
+| `Rt₀` | Corrected resistance (Ω) | result |
+
+**Worked example:** Rt = 12.345 Ω at t = 26.4 °C, t₀ = 20.0 °C, α = 3930 ppm/°C →
+`12.345 / (1 + 0.003930 × 6.4) = 12.042 Ω`.
+
+**When TC is ON for the active model:**
+- PASS/FAIL is judged on **Rt₀** against the model's limits (limits are treated as values at t₀).
+- **Rt₀ is written into the existing `Resistance` column** (CSV + DB) — no extra columns; the
+  Data Log line also shows the raw Rt and t for on-screen traceability.
+- The big *Measured* value shows Rt₀ (title `Measured → 20.0 °C (TC)`).
+- **If there is no fresh temperature (older than 10 s) the reading is *not recorded*** —
+  the Data Log shows `⚠ TC on — no fresh temperature…`, judgement is N/A. A raw Rt saved in
+  the same column would be indistinguishable from a corrected one.
+
+**The tab** (all touch): TC ON/OFF switch, `t₀` and `α` fields (numpad with ± key), *Defaults*,
+live readouts (Rt · t · Rt₀), the formula with the actual numbers substituted, and a chart:
+the **Actual (t, Rt)** point (orange circle) and the **Standard (t₀, Rt₀)** point (blue
+diamond) on the dashed line `R(T) = Rt₀·(1 + α(T − t₀))`. *Chart axes* swaps between
+X = Temperature / Y = Resistance (default) and X = Resistance / Y = Temperature.
+
+Both charts use **fixed axes** — temperature 0–50 °C, resistance from the model's whole spec —
+so only the points move between measurements (an out-of-range value stretches an axis just
+enough to stay visible).
+
+Beside it, a **resistance histogram** shows today's recorded (judged) values for the current
+model, **stacked and coloured per seq**, with each seq's lower/upper limits as dashed lines in
+the same colour and a legend giving name, n and mean. It is loaded from today's daily CSV when
+the model loads (old and new CSV layouts both work) and grows live with every recorded reading.
+With TC on the values are Rt₀ — readings logged while TC was off are raw Rt, and the CSV does not
+record which, so avoid toggling TC mid-day if you rely on the histogram.
+
+Settings are **per model** (`models[<model>]["tc"]` in `gui_mode5_config.json`) and follow the
+model automatically; a model with no saved settings starts with TC **OFF**.
+
+> ⚠ Make sure the **meter's own TC function is OFF**, otherwise `FETC?` is already corrected
+> and gets corrected twice.
+
+### Temperature sensor setup (Raspberry Pi 5)
+
+The sensor is an RS485 / Modbus RTU device on UART0 (`/dev/ttyAMA0`), read by
+[rs485_temperature_monitor.py](rs485_temperature_monitor.py). Its register map is a
+**placeholder** until confirmed on the real sensor:
+
+1. Enable UART0: add `dtoverlay=uart0` to `/boot/firmware/config.txt`, reboot.
+2. Install the extras into the venv: `.venv/bin/pip install pymodbus matplotlib`
+   (both are in `requirements.txt`, so `setup_services.sh` installs them too).
+3. Find the temperature register and scale:
+   ```bash
+   cd ~/Hioki_data_logger
+   .venv/bin/python rs485_temperature_monitor.py --scan --slave-id 1
+   ```
+   Pick the register whose value matches the room temperature (×0.1 or ×0.01).
+4. Put the result in `gui_mode5_config.json` (any key left out uses the default):
+   ```json
+   "temp_sensor": {
+     "enabled": true, "port": "/dev/ttyAMA0", "baud": 9600,
+     "slave_id": 1, "register": 0, "scale": 0.1, "poll_interval": 1.0
+   }
+   ```
+5. Restart the app — the tab's *Ambient t* card should show the live value and `Sensor: connected`.
+
+HIOKI auto-detect **skips the sensor port**, so its `*IDN?` probe never lands on the RS485 bus.
+Without `pymodbus` (e.g. developing on Windows) the app runs normally and the tab shows
+*Sensor unavailable* — use **Ctrl+T** to type a temperature by hand.
+
 ## Uploads & Offline Resilience
 
 Every stable reading is logged to the daily CSV immediately, then handed to the background
@@ -265,8 +348,10 @@ correctly — missing fields insert as `NULL`.
 ├── db_upload_manager.py       # Background upload queue + spec queue with retry
 ├── ui_UI_Resistance.py        # Qt UI code (PySide6)
 ├── UI_Resistance.ui           # Qt Designer UI definition
-├── numpad_dialog.py           # On-screen numeric keypad (limit entry)
+├── numpad_dialog.py           # On-screen numeric keypad (limits, ± for TC)
 ├── keyboard_dialog.py         # On-screen QWERTY keyboard (model/point names)
+├── temp_correction.py         # TC formula + Temperature Correction tab (chart)
+├── rs485_temperature_monitor.py  # RS485/Modbus temperature reader (+ --scan tool)
 │
 ├── migrations/
 │   ├── 001_multipoint_spec.sql  # Create resistance_spec + extend resistance
