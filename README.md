@@ -2,6 +2,12 @@
 
 A Python GUI application that reads resistance measurements from HIOKI multimeters via USB/RS-232 serial, judges each reading against per-model pass/fail limits, and automatically uploads results to a Microsoft SQL Server database. Designed for manufacturing quality-control kiosks — including a Raspberry Pi 5 touchscreen deployment.
 
+![QC Panel: multi-point measurement with auto-advance and PASS/FAIL judgement](docs/media/qc_panel_demo.gif)
+
+*QC Panel — the 500D sequence (A-B → B-C → D-E) auto-advancing, with a failing part injected
+mid-run. Recorded from the interactive [HIOKI_UI_mockup.html](HIOKI_UI_mockup.html) (simulated
+meter, sensor and database — open it in any browser to try it).*
+
 ## Features
 
 - Auto-detects HIOKI devices on available COM ports
@@ -249,6 +255,12 @@ The **Temperature Correction** tab converts the resistance measured at the ambie
 temperature into its value at a standard temperature — the same TC function as the HIOKI
 meter, done in the app with an external temperature sensor:
 
+![Temperature Correction tab: live conversion, fixed-axis chart and per-seq histogram](docs/media/temperature_correction_demo.gif)
+
+*TC on while the ambient temperature rises from 22 to 34 °C: the Actual point slides along
+R(T), Rt₀ stays put at t₀ = 20 °C, and each recorded reading joins its seq in the histogram.
+Recorded from [HIOKI_UI_mockup.html](HIOKI_UI_mockup.html).*
+
 ```
 Rt₀ = Rt / (1 + α_t₀ · (t − t₀))        α in ppm/°C  (3930 ppm/°C = 0.003930 /°C)
 ```
@@ -367,7 +379,8 @@ correctly — missing fields insert as `NULL`.
 ├── heartbeat.txt              # Liveness heartbeat for the watchdog (auto-created)
 ├── YYYYMMDD.csv               # Daily measurement log (auto-created)
 │
-├── HIOKI_UI_mockup.html       # Interactive UI mockup (QC panel + Register Model)
+├── HIOKI_UI_mockup.html       # Interactive UI mockup (QC panel, Register Model, TC)
+├── docs/media/                # README demo GIFs (recorded from the mockup)
 ├── barcodereader.md           # Barcode decode specification
 ├── setup_services.sh          # Raspberry Pi: install services + touch rotation
 ├── hioki-app.service          # Systemd unit — main app
