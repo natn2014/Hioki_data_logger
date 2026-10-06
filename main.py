@@ -21,7 +21,7 @@ from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtWidgets import (
     QApplication, QDialog, QMessageBox, QAbstractSpinBox,
     QPushButton, QHBoxLayout, QVBoxLayout, QLabel, QLineEdit, QDoubleSpinBox,
-    QScrollArea, QWidget
+    QScrollArea, QWidget, QFrame, QSizePolicy, QGridLayout
 )
 from PySide6.QtGui import QFont
 from usb_rs import Usb_rs
@@ -50,8 +50,11 @@ TEMP_SENSOR_DEFAULTS = {
     "port": rs485.SERIAL_PORT if rs485 else "/dev/ttyAMA0",
     "baud": rs485.BAUDRATE if rs485 else 9600,
     "slave_id": rs485.SLAVE_ID if rs485 else 1,
-    "register": rs485.REGISTER_ADDRESS if rs485 else 0,
-    "scale": rs485.SCALE if rs485 else 0.1,
+    "register": rs485.REGISTER_ADDRESS if rs485 else 14,
+    "raw_at_4ma": rs485.RAW_AT_4MA if rs485 else 400,
+    "raw_at_20ma": rs485.RAW_AT_20MA if rs485 else 2000,
+    "temp_at_4ma": rs485.TEMP_AT_4MA if rs485 else 0.0,
+    "temp_at_20ma": rs485.TEMP_AT_20MA if rs485 else 200.0,
     "poll_interval": rs485.POLL_INTERVAL_SEC if rs485 else 1.0,
 }
 
@@ -718,10 +721,14 @@ class MainWindow(QDialog):
 
         # Remaining controls (added programmatically so the generated UI file
         # stays untouched). Reset needs an active sequence; Edit Spec never does.
-        self.point_button_row = QHBoxLayout()
+        # The row lives in a container that stays hidden until the ⚙ settings
+        # button (always visible, right end) is tapped.
+        self.point_button_box = QWidget()
+        self.point_button_row = QHBoxLayout(self.point_button_box)
+        self.point_button_row.setContentsMargins(0, 0, 0, 0)
         self.btn_reset_point = QPushButton("⟲ Reset to first point")
         self.btn_new_model = QPushButton("＋ New Model")
-        self.btn_edit_spec = QPushButton("⚙ Edit Spec")
+        self.btn_edit_spec = QPushButton("✎ Edit Spec")
         # Force-uploads pending_uploads.json now, skipping the retry timer/backoff.
         self.btn_upload_now = QPushButton("⬆ Upload Now")
         # Toggle: hold the last reading vs. release the display to 0 in standby.
@@ -730,8 +737,26 @@ class MainWindow(QDialog):
         for b in (self.btn_reset_point, self.btn_new_model,
                   self.btn_edit_spec, self.btn_upload_now, self.btn_hold_toggle):
             b.setMinimumHeight(48)
+            # Let long labels shrink rather than push the window past the screen.
+            b.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
             self.point_button_row.addWidget(b)
-        self.ui.groupBox_Judge.layout().addLayout(self.point_button_row)
+        self.btn_settings = QPushButton("⚙")
+        self.btn_settings.setCheckable(True)
+        self.btn_settings.setToolTip("Show / hide settings buttons")
+        self.btn_settings.toggled.connect(self.point_button_box.setVisible)
+        self.point_button_box.setVisible(False)
+        # ⚙ sits on the PASS/FAIL box's bottom-right corner: both share one grid
+        # cell. (Not a child of the judgement button — that one is disabled, and
+        # a disabled parent would disable the gear too.)
+        judge_lay = self.ui.groupBox_Judge.layout()
+        judge_lay.removeWidget(self.ui.pushButton_Judgement)
+        judge_grid = QGridLayout()
+        judge_grid.addWidget(self.ui.pushButton_Judgement, 0, 0)
+        judge_grid.addWidget(self.btn_settings, 0, 0,
+                             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom)
+        judge_lay.insertLayout(0, judge_grid)
+        self.btn_settings.raise_()
+        judge_lay.addWidget(self.point_button_box)
         self.btn_reset_point.clicked.connect(self.on_reset_point)
         self.btn_new_model.clicked.connect(self.on_new_model_clicked)
         self.btn_edit_spec.clicked.connect(self.on_edit_spec_clicked)
@@ -740,12 +765,12 @@ class MainWindow(QDialog):
         self._apply_hold_toggle_ui()   # reflect the (default) hold_previous state
 
         # Temperature Correction tab (QC Panel tab comes from the generated UI).
-        self.ui.tabWidget.tabBar().setStyleSheet(
-            "QTabBar::tab{min-height:44px;min-width:220px;padding:6px 18px;font-size:15pt;}")
         self.tc_tab = TempCorrectionTab(self)
         self.ui.tabWidget.addTab(self.tc_tab, "Temperature Correction")
         self.tc_tab.settings_changed.connect(self.on_tc_settings_changed)
         self.tc_tab.axis_changed.connect(self.on_tc_axis_changed)
+        self._build_temp_card()
+        self._fit_to_screen()
         self._apply_point_to_ui()  # builds cards + sets initial enabled state
 
         # Check if there are pending uploads to retry
@@ -768,6 +793,7 @@ class MainWindow(QDialog):
     def _apply_ui_scale(self):
         screen = QApplication.primaryScreen().availableGeometry()
         scale = min(screen.width() / 1280.0, screen.height() / 800.0, 1.0)
+        self.ui_scale = scale
 
         def sf(pt, bold=False):
             f = QFont()
@@ -786,9 +812,15 @@ class MainWindow(QDialog):
         ui.label_wifi.setFont(sf(13, bold=True))
         ui.pushButton_model.setFont(sf(25))
         ui.pushButton_model.setMinimumHeight(px(80))
+        # Model button fills the status row: as tall as the USB + WiFi stack.
+        ui.pushButton_model.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                          QSizePolicy.Policy.Expanding)
+        for f in (ui.frame_usb, ui.frame_wifi):
+            f.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
 
         ui.groupBox_Resistance.setFont(sf(12))
-        ui.groupBox_MeasureValue.setFont(sf(24, bold=True))
+        # Smaller title: at 24 pt the long point + TC title alone was ~680 px wide.
+        ui.groupBox_MeasureValue.setFont(sf(16, bold=True))
         ui.doubleSpinBox_Measure.setFont(sf(72, bold=True))
 
         ui.groupBox_UpperLimit.setFont(sf(18))
@@ -800,6 +832,99 @@ class MainWindow(QDialog):
         ui.pushButton_Judgement.setFont(sf(48))
 
         ui.groupBox.setFont(sf(12))
+        ui.groupBox.setMinimumWidth(px(220))
+
+    def _px(self, v):
+        return max(1, round(v * self.ui_scale))
+
+    def _fit_to_screen(self):
+        """Scale the widgets added in code, then pin the window to the screen.
+
+        At 1024x768 the unscaled TC tab, button row and tab bar made the window
+        ~1185 px wide, pushing the Data Log off the right edge."""
+        scale, px = self.ui_scale, self._px
+        self.ui.tabWidget.tabBar().setStyleSheet(
+            f"QTabBar::tab{{min-height:{px(44)}px;min-width:{px(220)}px;"
+            f"padding:{px(6)}px {px(18)}px;font-size:{max(8, round(15 * scale))}pt;}}")
+        for b in (self.btn_reset_point, self.btn_new_model,
+                  self.btn_edit_spec, self.btn_upload_now, self.btn_hold_toggle):
+            f = b.font()
+            f.setPointSize(max(8, round(13 * scale)))
+            b.setFont(f)
+            b.setMinimumHeight(px(48))
+        gf = self.btn_settings.font()
+        gf.setPointSize(max(8, round(22 * scale)))
+        self.btn_settings.setFont(gf)
+        self.btn_settings.setFixedSize(px(64), px(48))
+        self.tc_tab.apply_scale(scale)
+
+        screen = QApplication.primaryScreen()
+        geo = screen.availableGeometry()
+        self.setMaximumSize(screen.geometry().size())
+        self.setGeometry(geo)
+        self.log_event(f"Screen {screen.geometry().width()}x{screen.geometry().height()}, "
+                       f"UI scale {scale:.2f}")
+        need = self.minimumSizeHint()
+        if need.width() > geo.width() or need.height() > geo.height():
+            self.log_event(f"UI needs {need.width()}x{need.height()}, larger than the "
+                           f"screen {geo.width()}x{geo.height()}")
+
+    # ── Object-temperature card (top of the right column, above the Data Log) ────
+
+    def _build_temp_card(self):
+        ui, scale = self.ui, self.ui_scale
+        self.temp_card = QFrame()
+        self.temp_card.setFrameShape(QFrame.Shape.StyledPanel)
+        self.temp_card.setSizePolicy(QSizePolicy.Policy.Preferred,
+                                     QSizePolicy.Policy.Fixed)
+        self.temp_card.setFixedHeight(self._px(110))
+        lay = QVBoxLayout(self.temp_card)
+        lay.setContentsMargins(8, 2, 8, 2)
+        lay.setSpacing(0)
+        self.temp_card_title = QLabel("Object Temperature")
+        self.temp_card_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        tf = QFont()
+        tf.setPointSize(max(8, round(11 * scale)))
+        self.temp_card_title.setFont(tf)
+        self.temp_card_value = QLabel("-- °C")
+        self.temp_card_value.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        vf = QFont()
+        vf.setPointSize(max(8, round(25 * scale)))
+        vf.setBold(True)
+        self.temp_card_value.setFont(vf)
+        lay.addWidget(self.temp_card_title)
+        lay.addWidget(self.temp_card_value, 1)
+        # Right column: temperature card on top, Data Log below it.
+        ui.mainLayout.removeWidget(ui.groupBox)
+        right_col = QVBoxLayout()
+        right_col.addWidget(self.temp_card)
+        right_col.addWidget(ui.groupBox, 1)
+        ui.mainLayout.addLayout(right_col, 1)
+
+        self._temp_sensor_status = "starting"
+        self.temp_card_timer = QTimer(self)   # greys the card once readings stop
+        self.temp_card_timer.timeout.connect(self._update_temp_card)
+        self.temp_card_timer.start(1000)
+        self._update_temp_card()
+
+    def _on_temp_sensor_status(self, text):
+        self._temp_sensor_status = text
+        self._update_temp_card()
+
+    def _update_temp_card(self):
+        if self._temp_is_fresh():
+            color = "#4CAF50"
+            self.temp_card_value.setText(f"{self.last_temp:.1f} °C")
+            self.temp_card_title.setText("🌡 Object Temperature")
+        else:
+            color = "#888888"
+            self.temp_card_value.setText("-- °C")
+            self.temp_card_title.setText(f"🌡 {self._temp_sensor_status}"
+                                         if self.last_temp is None
+                                         else "🌡 stale / no reading")
+        self.temp_card.setStyleSheet(
+            f"QFrame{{border:2px solid {color};border-radius:6px;}}"
+            f"QLabel{{border:none;color:{color};}}")
 
     def _set_usb_status(self, state):
         props = {
@@ -1321,9 +1446,11 @@ class MainWindow(QDialog):
     def start_temp_sensor(self):
         cfg = self.temp_sensor_cfg
         if not cfg.get("enabled", True):
+            self._on_temp_sensor_status("sensor disabled")
             self.tc_tab.set_sensor_status("disabled in config")
             return
         if rs485 is None:
+            self._on_temp_sensor_status("sensor unavailable")
             self.tc_tab.set_sensor_status("unavailable (pymodbus/matplotlib missing)")
             self.log_event(f"Temperature sensor unavailable: {_RS485_IMPORT_ERROR}")
             return
@@ -1331,8 +1458,9 @@ class MainWindow(QDialog):
             self.temp_thread = rs485.ModbusReaderThread(
                 port=cfg["port"], baudrate=int(cfg["baud"]),
                 slave_id=int(cfg["slave_id"]), register_address=int(cfg["register"]),
-                register_count=1, scale=float(cfg["scale"]),
-                poll_interval=float(cfg["poll_interval"]),
+                register_count=1, poll_interval=float(cfg["poll_interval"]),
+                raw_at_4ma=float(cfg["raw_at_4ma"]), raw_at_20ma=float(cfg["raw_at_20ma"]),
+                temp_at_4ma=float(cfg["temp_at_4ma"]), temp_at_20ma=float(cfg["temp_at_20ma"]),
             )
         except Exception as e:
             self.tc_tab.set_sensor_status(f"config error: {e}")
@@ -1340,10 +1468,12 @@ class MainWindow(QDialog):
             return
         self.temp_thread.reading.connect(self.on_temp_reading)
         self.temp_thread.status.connect(self.tc_tab.set_sensor_status)
+        self.temp_thread.status.connect(self._on_temp_sensor_status)
         self.temp_thread.error.connect(self.on_temp_error)
         self.temp_thread.start()
         self.log_event(f"Temperature sensor started on {cfg['port']} "
-                       f"(slave {cfg['slave_id']}, reg {cfg['register']}, x{cfg['scale']})")
+                       f"(slave {cfg['slave_id']}, reg {cfg['register']}, "
+                       f"4-20 mA = {cfg['temp_at_4ma']}-{cfg['temp_at_20ma']} °C)")
 
     def stop_temp_sensor(self):
         if self.temp_thread is not None:
@@ -1356,6 +1486,7 @@ class MainWindow(QDialog):
         self.last_temp_ts = ts
         self._last_temp_error = ""
         self.tc_tab.set_temperature(temperature_c, ts)
+        self._update_temp_card()
         self._update_measure_title()
 
     def simulate_temperature(self):
@@ -1365,7 +1496,7 @@ class MainWindow(QDialog):
         production if pressed by accident."""
         start = self.last_temp if self.last_temp is not None else 25.0
         dlg = NumpadDialog(current_value=start, decimals=1,
-                           title="Simulated ambient temperature t (°C)",
+                           title="Simulated object temperature t (°C)",
                            min_val=-40.0, max_val=125.0, parent=self,
                            allow_negative=True)
         if dlg.exec() == QDialog.DialogCode.Accepted:
@@ -1458,7 +1589,7 @@ class MainWindow(QDialog):
                 f"{p['name']}\n{p['lower']:.{SPEC_DECIMALS}f} – {p['upper']:.{SPEC_DECIMALS}f} Ω\nseq {p['seq']}"
             )
             card.setCheckable(True)
-            card.setMinimumHeight(76)
+            card.setMinimumHeight(self._px(76))
             card.setStyleSheet(POINT_CARD_QSS)
             card.clicked.connect(
                 lambda _checked=False, idx=i: self.on_point_card_tapped(idx))

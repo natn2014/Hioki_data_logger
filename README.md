@@ -8,6 +8,36 @@ A Python GUI application that reads resistance measurements from HIOKI multimete
 mid-run. Recorded from the interactive [HIOKI_UI_mockup.html](HIOKI_UI_mockup.html) (simulated
 meter, sensor and database — open it in any browser to try it).*
 
+## How to Use
+
+Each GIF is recorded from the real app on the 1024×768 kiosk screen. The orange circle marks
+each tap, and the caption bar under the screen explains the step.
+
+| Measure a part (multi-point, PASS / FAIL) | Change model (keyboard or barcode) |
+|---|---|
+| ![Measure demo](docs/gifs/measure.gif) | ![Model demo](docs/gifs/model.gif) |
+| Probe each point in order: a stable reading is judged, saved to CSV + DB, and the app moves to the next point card. Object Temperature (top right) is live from the RS485 sensor. | Tap the Model button and type the name, or scan the part barcode with the USB scanner. The model's limits and points load immediately. |
+
+| Point cards | Settings buttons (⚙) |
+|---|---|
+| ![Point cards demo](docs/gifs/points.gif) | ![Settings demo](docs/gifs/settings.gif) |
+| Tap a card to jump to that point. ⚙ → ⟲ Reset to first point restarts the sequence. | ⚙ (bottom right of the judgement) shows or hides the tool buttons: Hold Reading / Release to 0, Upload Now for readings queued while offline. |
+
+| Edit a model's spec | Register a new model |
+|---|---|
+| ![Edit spec demo](docs/gifs/edit_spec.gif) | ![New model demo](docs/gifs/new_model.gif) |
+| ⚙ → ✎ Edit Spec, tap a limit to change it with the numpad, then Save to DB. | ⚙ → ＋ New Model: name (keyboard or barcode), then name / lower / upper for each point, in probing order. Save to DB, then Yes to switch to it. |
+
+| Temperature Correction |
+|---|
+| ![Temperature correction demo](docs/gifs/temperature.gif) |
+| Rt is converted to the standard temperature t₀. Set t₀ / α with the numpad, switch TC ON/OFF, swap the scatter axes, or switch to the histogram of today's readings. |
+
+To re-record the GIFs after a UI change, run
+`DISPLAY=:0 .venv/bin/python tools/record_demo_gifs.py [scene ...]`. The script runs a sandboxed
+copy of the app with a simulated meter, sensor and database. It never touches the production
+config, CSVs, DB or serial ports, so the kiosk service can keep running while it records.
+
 ## Features
 
 - Auto-detects HIOKI devices on available COM ports
@@ -311,8 +341,8 @@ model automatically; a model with no saved settings starts with TC **OFF**.
 ### Temperature sensor setup (Raspberry Pi 5)
 
 The sensor is an RS485 / Modbus RTU device on UART0 (`/dev/ttyAMA0`), read by
-[rs485_temperature_monitor.py](rs485_temperature_monitor.py). Its register map is a
-**placeholder** until confirmed on the real sensor:
+[rs485_temperature_monitor.py](rs485_temperature_monitor.py): an Optex SA-80T-2A
+(4–20 mA = 0–200 °C) behind a GLK 4–20 mA→RS485 converter:
 
 1. Enable UART0: add `dtoverlay=uart0` to `/boot/firmware/config.txt`, reboot.
 2. Install the extras into the venv: `.venv/bin/pip install pymodbus matplotlib`
@@ -322,15 +352,17 @@ The sensor is an RS485 / Modbus RTU device on UART0 (`/dev/ttyAMA0`), read by
    cd ~/Hioki_data_logger
    .venv/bin/python rs485_temperature_monitor.py --scan --slave-id 1
    ```
-   Pick the register whose value matches the room temperature (×0.1 or ×0.01).
+   The GLK converter puts the loop current in register 14 (0.01 mA/count); the scan
+   prints it converted to mA and °C. (Register 0 is *not* the temperature — ×0.1 it reads ~620 °C.)
 4. Put the result in `gui_mode5_config.json` (any key left out uses the default):
    ```json
    "temp_sensor": {
      "enabled": true, "port": "/dev/ttyAMA0", "baud": 9600,
-     "slave_id": 1, "register": 0, "scale": 0.1, "poll_interval": 1.0
+     "slave_id": 1, "register": 14, "poll_interval": 1.0,
+     "raw_at_4ma": 400, "raw_at_20ma": 2000, "temp_at_4ma": 0.0, "temp_at_20ma": 200.0
    }
    ```
-5. Restart the app — the tab's *Ambient t* card should show the live value and `Sensor: connected`.
+5. Restart the app — the tab's *Object temp t* card should show the live value and `Sensor: connected`.
 
 HIOKI auto-detect **skips the sensor port**, so its `*IDN?` probe never lands on the RS485 bus.
 Without `pymodbus` (e.g. developing on Windows) the app runs normally and the tab shows
@@ -381,6 +413,8 @@ correctly — missing fields insert as `NULL`.
 │
 ├── HIOKI_UI_mockup.html       # Interactive UI mockup (QC panel, Register Model, TC)
 ├── docs/media/                # README demo GIFs (recorded from the mockup)
+├── docs/gifs/                 # How-to GIFs per function (recorded from the real app)
+├── tools/record_demo_gifs.py  # Re-records docs/gifs/ (sandboxed, simulated meter/sensor/DB)
 ├── barcodereader.md           # Barcode decode specification
 ├── setup_services.sh          # Raspberry Pi: install services + touch rotation
 ├── hioki-app.service          # Systemd unit — main app

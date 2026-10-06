@@ -20,7 +20,7 @@ from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame,
-    QSizePolicy,
+    QSizePolicy, QButtonGroup,
 )
 
 from numpad_dialog import NumpadDialog
@@ -162,6 +162,7 @@ class TempCorrectionTab(QWidget):
         self._t_ts = 0.0
         self._sensor_status = "waiting…"
         self._x_is_temp = True
+        self._chart = "scatter"   # which chart fills the canvas: scatter | hist
         self._r_axis = (0.0, 10.0)     # fixed resistance axis (set per model spec)
         # Histogram: today's judged values for the current model, per seq.
         self._hist = {}                # seq (int|None) -> {"name": str, "values": [float]}
@@ -229,7 +230,7 @@ class TempCorrectionTab(QWidget):
         # Row 2: readouts
         cards = QHBoxLayout()
         f1, self.lbl_rt = _card("Measured  Rt  (Ω)", 26)
-        f2, self.lbl_t = _card("Ambient  t  (°C)", 26)
+        f2, self.lbl_t = _card("Object temp  t  (°C)", 26)
         f3, self.lbl_rt0 = _card("Corrected  Rt₀  (Ω)", 32, accent=COLOR_STANDARD)
         self.lbl_sensor = QLabel("")
         self.lbl_sensor.setStyleSheet(f"border:none;color:{TEXT_SECONDARY};")
@@ -251,27 +252,37 @@ class TempCorrectionTab(QWidget):
             "background:#f3f2ef;border-radius:6px;padding:6px 10px;color:#0b0b0b;")
         root.addWidget(self.lbl_formula)
 
-        # Row 4: axis selector + chart
+        # Row 4: chart selector (one chart at a time) + scatter axis swap + chart
         axis_row = QHBoxLayout()
-        axis_lbl = QLabel("Scatter axes:")
-        axis_lbl.setFont(btn_font)
+        self.chart_buttons = QButtonGroup(self)
+        self.chart_buttons.setExclusive(True)
+        for key, text in (("scatter", "Scatter"), ("hist", "Histogram")):
+            b = QPushButton(text)
+            b.setCheckable(True)
+            b.setChecked(key == self._chart)
+            b.setFont(btn_font)
+            b.setMinimumHeight(48)
+            b.setStyleSheet(
+                "QPushButton{background:#ffffff;color:#0b0b0b;border:2px solid #2a78d6;"
+                "border-radius:8px;padding:4px 14px;}"
+                "QPushButton:checked{background:#2a78d6;color:white;}")
+            b.clicked.connect(lambda _c=False, k=key: self._set_chart(k))
+            self.chart_buttons.addButton(b)
+            axis_row.addWidget(b)
         self.btn_axis = QPushButton()
         self.btn_axis.setFont(btn_font)
         self.btn_axis.setMinimumHeight(48)
         self.btn_axis.clicked.connect(self._toggle_axis)
-        axis_row.addWidget(axis_lbl)
         axis_row.addWidget(self.btn_axis, 1)
         root.addLayout(axis_row)
 
         if _HAS_MPL:
             self.figure = Figure(figsize=(9, 3.4), facecolor=SURFACE)
-            self.figure.subplots_adjust(left=0.075, right=0.985, top=0.88, bottom=0.17,
-                                        wspace=0.28)
+            self.figure.subplots_adjust(left=0.075, right=0.985, top=0.88, bottom=0.17)
             self.canvas = FigureCanvasQTAgg(self.figure)
             self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding,
                                       QSizePolicy.Policy.Expanding)
-            self.ax = self.figure.add_subplot(1, 2, 1)     # (t, Rt) vs (t0, Rt0)
-            self.hax = self.figure.add_subplot(1, 2, 2)    # per-seq histogram
+            self._build_axes()
             root.addWidget(self.canvas, 1)
         else:
             self.figure = self.canvas = self.ax = self.hax = None
@@ -280,6 +291,21 @@ class TempCorrectionTab(QWidget):
             root.addWidget(na, 1)
 
     # ── public API (called by MainWindow) ─────────────────────────────────────
+
+    def apply_scale(self, scale):
+        """Shrink fonts and button heights for small screens (scale <= 1)."""
+        if scale >= 1.0:
+            return
+        widgets = [self] + self.findChildren(QWidget)
+        sizes = [(w, w.font().pointSize()) for w in widgets]   # read all first
+        for w, pt in sizes:
+            if pt > 0:
+                f = w.font()
+                f.setPointSize(max(8, round(pt * scale)))
+                w.setFont(f)
+        for b in self.findChildren(QPushButton):
+            if b.minimumHeight() > 0:
+                b.setMinimumHeight(max(1, round(b.minimumHeight() * scale)))
 
     def set_model(self, name):
         self.model_label.setText(f"Model: {name}" if name else "Model: — (set a model first)")
@@ -397,6 +423,23 @@ class TempCorrectionTab(QWidget):
         self._refresh_all()
         self._emit_settings()
 
+    def _build_axes(self):
+        """One full-width axes for the selected chart; the other is None."""
+        self.figure.clear()
+        ax = self.figure.add_subplot(1, 1, 1)
+        if self._chart == "scatter":
+            self.ax, self.hax = ax, None    # (t, Rt) vs (t0, Rt0)
+        else:
+            self.ax, self.hax = None, ax    # per-seq histogram
+
+    def _set_chart(self, chart):
+        if chart == self._chart:
+            return
+        self._chart = chart
+        if self.figure is not None:
+            self._build_axes()
+        self._refresh_all()
+
     def _toggle_axis(self):
         self._x_is_temp = not self._x_is_temp
         self._refresh_all()
@@ -430,6 +473,7 @@ class TempCorrectionTab(QWidget):
                 "QPushButton{background:#6b6a66;color:white;border-radius:8px;}")
         self.btn_t0.setText(f"t₀  {self._t0:.1f} °C")
         self.btn_alpha.setText(f"α  {self._alpha} ppm/°C")
+        self.btn_axis.setVisible(self._chart == "scatter")
         self.btn_axis.setText("X: Temperature  ·  Y: Resistance   (tap to swap)"
                               if self._x_is_temp else
                               "X: Resistance  ·  Y: Temperature   (tap to swap)")
@@ -468,11 +512,13 @@ class TempCorrectionTab(QWidget):
             self._redraw_timer.start(0)
 
     def _redraw(self):
-        if self.ax is None or not self.isVisible():
+        if self.figure is None or not self.isVisible():
             return
         self._dirty = False
-        self._draw_scatter()
-        self._draw_hist()
+        if self._chart == "scatter":
+            self._draw_scatter()
+        else:
+            self._draw_hist()
         self.canvas.draw_idle()
 
     @staticmethod
