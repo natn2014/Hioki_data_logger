@@ -26,6 +26,19 @@ class NumpadDialog(QDialog):
         self._is_fresh = True  # first keypress clears the pre-loaded value
         self._scale = _screen_scale()
         self._setup_ui(title)
+        self._place_centered()
+
+    def _place_centered(self):
+        """Position explicitly before show. Left to Qt + the window manager, a
+        frameless dialog's real position sometimes differed from what Qt
+        believed (Qt: 0,0; screen: centred), so touch taps were mapped with that
+        offset and hit the wrong key (tap "5" -> "U"). Mouse clicks were fine."""
+        self.adjustSize()
+        parent = self.parentWidget()
+        area = (parent.window().geometry() if parent is not None
+                else QApplication.primaryScreen().availableGeometry())
+        c = area.center()
+        self.move(c.x() - self.width() // 2, c.y() - self.height() // 2)
 
     def _px(self, v):
         return max(1, round(v * self._scale))

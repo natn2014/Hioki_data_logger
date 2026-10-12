@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
     QPushButton, QHBoxLayout, QVBoxLayout, QLabel, QLineEdit, QDoubleSpinBox,
     QScrollArea, QWidget, QFrame, QSizePolicy, QGridLayout
 )
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QFontMetrics
 from usb_rs import Usb_rs
 from insert_resistance2db import (
     insert_to_mssql, fetch_model_spec, upsert_model_spec, check_schema
@@ -55,7 +55,7 @@ TEMP_SENSOR_DEFAULTS = {
     "raw_at_20ma": rs485.RAW_AT_20MA if rs485 else 2000,
     "temp_at_4ma": rs485.TEMP_AT_4MA if rs485 else 0.0,
     "temp_at_20ma": rs485.TEMP_AT_20MA if rs485 else 200.0,
-    "poll_interval": rs485.POLL_INTERVAL_SEC if rs485 else 1.0,
+    "poll_interval": rs485.POLL_INTERVAL_SEC if rs485 else 0.2,
 }
 
 BAUD_RATE = 9600
@@ -80,6 +80,14 @@ STALL_CHECK_MS = 2000
 # Watchdog backstop: main.py touches this on each successful poll; watchdog.sh
 # force-restarts if it goes stale (well above STALL_LIMIT_S + reconnect backoff
 # so in-app soft recovery always gets first chance).
+# USB status card: state -> (text, colour). Also sizes the card (widest text).
+USB_STATES = {
+    "connected":    ("● USB  Connected",    "#4CAF50"),
+    "connecting":   ("◌ USB  Connecting",   "#FF9800"),
+    "disconnected": ("○ USB  Disconnected", "#f44336"),
+}
+WIFI_WIDEST_TEXT = "WiFi ▂▄▆█ 100%"
+
 HEARTBEAT_FILE = "heartbeat.txt"
 HEARTBEAT_MIN_INTERVAL_S = 5.0  # throttle disk writes to spare the SD card
 
@@ -810,18 +818,41 @@ class MainWindow(QDialog):
         ui.groupBox_status.setFont(sf(12))
         ui.label_usb_status.setFont(sf(13, bold=True))
         ui.label_wifi.setFont(sf(13, bold=True))
-        ui.pushButton_model.setFont(sf(25))
-        ui.pushButton_model.setMinimumHeight(px(80))
-        # Model button fills the status row: as tall as the USB + WiFi stack.
-        ui.pushButton_model.setSizePolicy(QSizePolicy.Policy.Expanding,
-                                          QSizePolicy.Policy.Expanding)
+        # Fixed width from the longest text either card can show, so the cards
+        # (and the Model button beside them) don't jump as the status changes.
+        fm = QFontMetrics(ui.label_usb_status.font())
+        texts = [t for t, _ in USB_STATES.values()] + [WIFI_WIDEST_TEXT]
+        text_w = max(fm.horizontalAdvance(t) for t in texts)
+        # label padding 10+10, label border 2+2, card margins and frame border
+        card_w = text_w + 24 + 2 * px(4) + 6
         for f in (ui.frame_usb, ui.frame_wifi):
-            f.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+            f.setFixedWidth(card_w)
+        ui.pushButton_model.setFont(sf(25))
+        # Compact status row (~half its former ~170 px): the Model button is
+        # exactly as tall as the USB + WiFi stack, freeing height for the
+        # measured value and the judgement.
+        card_h = px(52)
+        for f in (ui.frame_usb, ui.frame_wifi):
+            f.setFixedHeight(card_h)
+            f.layout().setContentsMargins(px(4), px(2), px(4), px(2))
+        ui.pushButton_model.setMinimumHeight(0)
+        ui.pushButton_model.setFixedHeight(2 * card_h + ui.statusCardsLayout.spacing())
+        ui.pushButton_model.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                          QSizePolicy.Policy.Fixed)
+        ui.horizontalLayout_2.setContentsMargins(px(6), px(4), px(6), px(4))
+        # The status box keeps its compact height; spare height goes to the
+        # measured value and the judgement instead.
+        ui.groupBox_status.setSizePolicy(QSizePolicy.Policy.Preferred,
+                                         QSizePolicy.Policy.Maximum)
+        ui.verticalLayout.setStretchFactor(ui.groupBox_Resistance, 3)
+        ui.verticalLayout.setStretchFactor(ui.groupBox_Judge, 2)
+        ui.pushButton_Judgement.setSizePolicy(QSizePolicy.Policy.Preferred,
+                                              QSizePolicy.Policy.Expanding)
 
         ui.groupBox_Resistance.setFont(sf(12))
         # Smaller title: at 24 pt the long point + TC title alone was ~680 px wide.
         ui.groupBox_MeasureValue.setFont(sf(16, bold=True))
-        ui.doubleSpinBox_Measure.setFont(sf(72, bold=True))
+        ui.doubleSpinBox_Measure.setFont(sf(90, bold=True))   # +25%
 
         ui.groupBox_UpperLimit.setFont(sf(18))
         ui.doubleSpinBox_UpperLimit.setFont(sf(30))
@@ -829,7 +860,7 @@ class MainWindow(QDialog):
         ui.doubleSpinBox_lowerLimit.setFont(sf(30))
 
         ui.groupBox_Judge.setFont(sf(12))
-        ui.pushButton_Judgement.setFont(sf(48))
+        ui.pushButton_Judgement.setFont(sf(60))   # +25%
 
         ui.groupBox.setFont(sf(12))
         ui.groupBox.setMinimumWidth(px(220))
@@ -860,7 +891,6 @@ class MainWindow(QDialog):
 
         screen = QApplication.primaryScreen()
         geo = screen.availableGeometry()
-        self.setMaximumSize(screen.geometry().size())
         self.setGeometry(geo)
         self.log_event(f"Screen {screen.geometry().width()}x{screen.geometry().height()}, "
                        f"UI scale {scale:.2f}")
@@ -904,7 +934,7 @@ class MainWindow(QDialog):
         self._temp_sensor_status = "starting"
         self.temp_card_timer = QTimer(self)   # greys the card once readings stop
         self.temp_card_timer.timeout.connect(self._update_temp_card)
-        self.temp_card_timer.start(1000)
+        self.temp_card_timer.start(200)   # same pace as the sensor poll
         self._update_temp_card()
 
     def _on_temp_sensor_status(self, text):
@@ -927,16 +957,11 @@ class MainWindow(QDialog):
             f"QLabel{{border:none;color:{color};}}")
 
     def _set_usb_status(self, state):
-        props = {
-            "connected":    ("● USB  Connected",    "#4CAF50"),
-            "connecting":   ("◌ USB  Connecting",   "#FF9800"),
-            "disconnected": ("○ USB  Disconnected", "#f44336"),
-        }
-        text, color = props.get(state, ("○ USB  Disconnected", "#f44336"))
+        text, color = USB_STATES.get(state, USB_STATES["disconnected"])
         self.ui.label_usb_status.setText(text)
         self.ui.label_usb_status.setStyleSheet(
             f"color: {color}; font-weight: bold; "
-            f"border: 2px solid {color}; border-radius: 6px; padding: 4px 10px;"
+            f"border: 2px solid {color}; border-radius: 6px; padding: 2px 10px;"
         )
 
     def _on_wifi_ready(self, pct):

@@ -38,6 +38,19 @@ class KeyboardDialog(QDialog):
         self._letter_buttons = []   # relabelled when Shift toggles
         self._max_length = max_length
         self._setup_ui(title, current_text)
+        self._place_centered()
+
+    def _place_centered(self):
+        """Position explicitly before show. Left to Qt + the window manager, a
+        frameless dialog's real position sometimes differed from what Qt
+        believed (Qt: 0,0; screen: centred), so touch taps were mapped with that
+        offset and hit the wrong key (tap "5" -> "U"). Mouse clicks were fine."""
+        self.adjustSize()
+        parent = self.parentWidget()
+        area = (parent.window().geometry() if parent is not None
+                else QApplication.primaryScreen().availableGeometry())
+        c = area.center()
+        self.move(c.x() - self.width() // 2, c.y() - self.height() // 2)
 
     # ── sizing helpers (mirror NumpadDialog) ──────────────────────────────────
 

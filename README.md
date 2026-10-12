@@ -358,7 +358,7 @@ The sensor is an RS485 / Modbus RTU device on UART0 (`/dev/ttyAMA0`), read by
    ```json
    "temp_sensor": {
      "enabled": true, "port": "/dev/ttyAMA0", "baud": 9600,
-     "slave_id": 1, "register": 14, "poll_interval": 1.0,
+     "slave_id": 1, "register": 14, "poll_interval": 0.2,
      "raw_at_4ma": 400, "raw_at_20ma": 2000, "temp_at_4ma": 0.0, "temp_at_20ma": 200.0
    }
    ```

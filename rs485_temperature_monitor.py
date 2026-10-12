@@ -54,7 +54,7 @@ TEMP_AT_20MA = 200.0
 # sensor fault, above ~20.5 mA means the target is over range.
 UNDER_MA = 3.8
 OVER_MA = 20.5
-POLL_INTERVAL_SEC = 1.0
+POLL_INTERVAL_SEC = 0.2    # 5 readings/s; one Modbus exchange is ~20-50 ms at 9600
 HISTORY_LENGTH = 120        # points kept on the rolling chart
 RECONNECT_BACKOFF_SEC = 3.0
 

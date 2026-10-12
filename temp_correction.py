@@ -175,7 +175,7 @@ class TempCorrectionTab(QWidget):
         self._redraw_timer.timeout.connect(self._redraw)
         self._age_timer = QTimer(self)           # keep the "x s ago" text honest
         self._age_timer.timeout.connect(self._refresh_readouts)
-        self._age_timer.start(1000)
+        self._age_timer.start(200)            # same pace as the sensor poll
 
         self._build()
         self._refresh_all()
@@ -333,7 +333,13 @@ class TempCorrectionTab(QWidget):
     def set_temperature(self, t, ts=None):
         self._t = float(t)
         self._t_ts = ts if ts is not None else time.time()
-        self._refresh_all()
+        if self._chart == "scatter":
+            self._refresh_all()
+        else:
+            # The histogram doesn't depend on t: refresh the numbers only and
+            # skip the ~100 ms chart redraw on every 0.2 s sensor reading.
+            self._refresh_controls()
+            self._refresh_readouts()
 
     def set_sensor_status(self, text):
         self._sensor_status = text
