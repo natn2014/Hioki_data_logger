@@ -107,3 +107,67 @@
 [2026-08-24 08:39:35] Check interval : 10s
 [2026-08-24 08:39:35] Kill threshold : 3 consecutive D-state checks
 [2026-08-24 08:39:35] PID 1209: D-state (blocked/hung) [1 / 3]
+[2026-10-06 03:35:46] ========================================
+[2026-10-06 03:35:46] Watchdog started. Monitoring: main.py
+[2026-10-06 03:35:46] Check interval : 10s
+[2026-10-06 03:35:46] Kill threshold : 3 consecutive D-state checks
+[2026-10-06 07:14:10] ========================================
+[2026-10-06 07:14:10] Watchdog started. Monitoring: main.py
+[2026-10-06 07:14:10] Check interval : 10s
+[2026-10-06 07:14:10] Kill threshold : 3 consecutive D-state checks
+[2026-10-06 07:14:10] PID 971: D-state (blocked/hung) [1 / 3]
+[2026-10-06 08:00:09] ========================================
+[2026-10-06 08:00:09] Watchdog started. Monitoring: main.py
+[2026-10-06 08:00:09] Check interval : 10s
+[2026-10-06 08:00:09] Kill threshold : 3 consecutive D-state checks
+[2026-10-06 08:01:18] ========================================
+[2026-10-06 08:01:18] Watchdog started. Monitoring: main.py
+[2026-10-06 08:01:18] Check interval : 10s
+[2026-10-06 08:01:18] Kill threshold : 3 consecutive D-state checks
+[2026-10-06 08:01:18] PID 975: D-state (blocked/hung) [1 / 3]
+[2026-10-06 08:13:24] ========================================
+[2026-10-06 08:13:24] Watchdog started. Monitoring: main.py
+[2026-10-06 08:13:24] Check interval : 10s
+[2026-10-06 08:13:24] Kill threshold : 3 consecutive D-state checks
+[2026-10-06 08:13:24] PID 966: D-state (blocked/hung) [1 / 3]
+[2026-10-06 08:17:26] ========================================
+[2026-10-06 08:17:26] Watchdog started. Monitoring: main.py
+[2026-10-06 08:17:26] Check interval : 10s
+[2026-10-06 08:17:26] Kill threshold : 3 consecutive D-state checks
+[2026-10-06 08:17:26] PID 972: D-state (blocked/hung) [1 / 3]
+[2026-10-06 08:18:20] ========================================
+[2026-10-06 08:18:20] Watchdog started. Monitoring: main.py
+[2026-10-06 08:18:20] Check interval : 10s
+[2026-10-06 08:18:20] Kill threshold : 3 consecutive D-state checks
+[2026-10-06 08:18:50] ========================================
+[2026-10-06 08:18:50] Watchdog started. Monitoring: main.py
+[2026-10-06 08:18:50] Check interval : 10s
+[2026-10-06 08:18:50] Kill threshold : 3 consecutive D-state checks
+[2026-10-12 04:13:11] ========================================
+[2026-10-12 04:13:11] Watchdog started. Monitoring: main.py
+[2026-10-12 04:13:11] Check interval : 10s
+[2026-10-12 04:13:11] Kill threshold : 3 consecutive D-state checks
+[2026-10-12 04:13:41] ========================================
+[2026-10-12 04:13:41] Watchdog started. Monitoring: main.py
+[2026-10-12 04:13:41] Check interval : 10s
+[2026-10-12 04:13:41] Kill threshold : 3 consecutive D-state checks
+[2026-10-12 04:22:12] ========================================
+[2026-10-12 04:22:12] Watchdog started. Monitoring: main.py
+[2026-10-12 04:22:12] Check interval : 10s
+[2026-10-12 04:22:12] Kill threshold : 3 consecutive D-state checks
+[2026-10-12 04:24:08] ========================================
+[2026-10-12 04:24:08] Watchdog started. Monitoring: main.py
+[2026-10-12 04:24:08] Check interval : 10s
+[2026-10-12 04:24:08] Kill threshold : 3 consecutive D-state checks
+[2026-10-12 04:27:11] ========================================
+[2026-10-12 04:27:11] Watchdog started. Monitoring: main.py
+[2026-10-12 04:27:11] Check interval : 10s
+[2026-10-12 04:27:11] Kill threshold : 3 consecutive D-state checks
+[2026-10-12 04:41:08] ========================================
+[2026-10-12 04:41:08] Watchdog started. Monitoring: main.py
+[2026-10-12 04:41:08] Check interval : 10s
+[2026-10-12 04:41:08] Kill threshold : 3 consecutive D-state checks
+[2026-10-12 04:56:28] ========================================
+[2026-10-12 04:56:28] Watchdog started. Monitoring: main.py
+[2026-10-12 04:56:28] Check interval : 10s
+[2026-10-12 04:56:28] Kill threshold : 3 consecutive D-state checks
