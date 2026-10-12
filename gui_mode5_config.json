@@ -1,5 +1,5 @@
 {
-  "current_model": "500D T62",
+  "current_model": "2I5F00GSVIPWBKTH-MM-4FHX-C1",
   "models": {
     "TESE": {
       "lower_limit": 1.7,
@@ -55,6 +55,15 @@
       ],
       "lower_limit": 2.9,
       "upper_limit": 3.4
+    },
+    "2I5F00GSVIPWBKTH-MM-4FHX-C1": {
+      "lower_limit": 2.9,
+      "upper_limit": 3.4,
+      "tc": {
+        "enabled": true,
+        "t0": 20.0,
+        "alpha_ppm": 3930
+      }
     }
   },
   "hold_previous": true,

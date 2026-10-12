@@ -21,7 +21,7 @@ from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtWidgets import (
     QApplication, QDialog, QMessageBox, QAbstractSpinBox,
     QPushButton, QHBoxLayout, QVBoxLayout, QLabel, QLineEdit, QDoubleSpinBox,
-    QScrollArea, QWidget, QFrame, QSizePolicy, QGridLayout
+    QScrollArea, QWidget, QFrame, QSizePolicy, QGridLayout, QLayout
 )
 from PySide6.QtGui import QFont, QFontMetrics
 from usb_rs import Usb_rs
@@ -828,6 +828,7 @@ class MainWindow(QDialog):
         for f in (ui.frame_usb, ui.frame_wifi):
             f.setFixedWidth(card_w)
         ui.pushButton_model.setFont(sf(25))
+        self._model_font_pt = max(8, round(25 * scale))
         # Compact status row (~half its former ~170 px): the Model button is
         # exactly as tall as the USB + WiFi stack, freeing height for the
         # measured value and the judgement.
@@ -837,7 +838,9 @@ class MainWindow(QDialog):
             f.layout().setContentsMargins(px(4), px(2), px(4), px(2))
         ui.pushButton_model.setMinimumHeight(0)
         ui.pushButton_model.setFixedHeight(2 * card_h + ui.statusCardsLayout.spacing())
-        ui.pushButton_model.setSizePolicy(QSizePolicy.Policy.Expanding,
+        # Ignored width: a long model name shrinks/elides to fit (see
+        # _fit_model_text) instead of widening the window past the screen.
+        ui.pushButton_model.setSizePolicy(QSizePolicy.Policy.Ignored,
                                           QSizePolicy.Policy.Fixed)
         ui.horizontalLayout_2.setContentsMargins(px(6), px(4), px(6), px(4))
         # The status box keeps its compact height; spare height goes to the
@@ -888,6 +891,19 @@ class MainWindow(QDialog):
         self.btn_settings.setFont(gf)
         self.btn_settings.setFixedSize(px(64), px(48))
         self.tc_tab.apply_scale(scale)
+
+        # Safeguards against variable text widening the window off-screen:
+        # these widgets take the width the layout gives them (their text is
+        # fitted/elided or clipped), and the window's minimum size is no longer
+        # forced up to the content's — so _snap_to_screen can always win.
+        ui = self.ui
+        ui.groupBox_MeasureValue.setSizePolicy(QSizePolicy.Policy.Ignored,
+                                               QSizePolicy.Policy.Preferred)
+        self.tc_tab.model_label.setSizePolicy(QSizePolicy.Policy.Ignored,
+                                              QSizePolicy.Policy.Preferred)
+        ui.mainLayout.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
+        ui.pushButton_model.installEventFilter(self)
+        ui.groupBox_MeasureValue.installEventFilter(self)
 
         screen = QApplication.primaryScreen()
         geo = screen.availableGeometry()
@@ -956,6 +972,54 @@ class MainWindow(QDialog):
             f"QFrame{{border:2px solid {color};border-radius:6px;}}"
             f"QLabel{{border:none;color:{color};}}")
 
+    def _set_model_text(self, text):
+        self._model_text = text if text else "Model"
+        self._fit_model_text()
+
+    def _fit_model_text(self):
+        """Show the model name as large as fits the button: shrink the font
+        (down to 10 pt), then elide the middle as a last resort."""
+        btn = self.ui.pushButton_model
+        text = getattr(self, "_model_text", btn.text())
+        avail = max(20, btn.width() - self._px(24))
+        f = btn.font()
+        pt = getattr(self, "_model_font_pt", f.pointSize())
+        f.setPointSize(pt)
+        while pt > 10 and QFontMetrics(f).horizontalAdvance(text) > avail:
+            pt -= 1
+            f.setPointSize(pt)
+        btn.setFont(f)
+        btn.setText(QFontMetrics(f).elidedText(text, Qt.TextElideMode.ElideMiddle, avail))
+        btn.setToolTip(text)
+
+    def _apply_measure_title(self):
+        """Measured title, elided to the box width so it never widens it."""
+        box = self.ui.groupBox_MeasureValue
+        title = getattr(self, "_measure_title", "") or box.title()
+        avail = max(40, box.width() - self._px(24))
+        box.setTitle(QFontMetrics(box.font()).elidedText(
+            title, Qt.TextElideMode.ElideRight, avail))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # Safeguard: a window that grows past the screen never shrinks back on
+        # its own (seen once at 1086 px on the 1024 px kiosk) — snap it back.
+        # Whole screen, not availableGeometry(): the kiosk window is full screen
+        # and legitimately covers the desktop panel.
+        geo = self.screen().geometry()
+        if ((self.width() > geo.width() or self.height() > geo.height())
+                and not getattr(self, "_snap_pending", False)):
+            self._snap_pending = True
+            QTimer.singleShot(0, self._snap_to_screen)
+
+    def _snap_to_screen(self):
+        self._snap_pending = False
+        geo = self.screen().geometry()
+        if self.width() > geo.width() or self.height() > geo.height():
+            self.log_event(f"Window grew to {self.width()}x{self.height()} — "
+                           f"snapped back to the screen {geo.width()}x{geo.height()}")
+            self.setGeometry(geo)
+
     def _set_usb_status(self, state):
         text, color = USB_STATES.get(state, USB_STATES["disconnected"])
         self.ui.label_usb_status.setText(text)
@@ -977,6 +1041,12 @@ class MainWindow(QDialog):
         self.ui.label_wifi.setStyleSheet(f"color: {color}; font-weight: bold;")
 
     def eventFilter(self, source, event):
+        if event.type() == QEvent.Type.Resize:
+            if source is self.ui.pushButton_model:
+                self._fit_model_text()
+            elif source is self.ui.groupBox_MeasureValue:
+                self._apply_measure_title()
+            return super().eventFilter(source, event)
         if event.type() == QEvent.Type.MouseButtonPress:
             # While a point sequence drives the limits they are read-only; skip
             # the numpad so operators can't override the active point's range.
@@ -1061,7 +1131,7 @@ class MainWindow(QDialog):
 
         # Push loaded values into UI
         self._apply_hold_toggle_ui()
-        self.ui.pushButton_model.setText(self.cleaned_model if self.cleaned_model else "Model")
+        self._set_model_text(self.cleaned_model)
         self.ui.doubleSpinBox_lowerLimit.blockSignals(True)
         self.ui.doubleSpinBox_UpperLimit.blockSignals(True)
         self.ui.doubleSpinBox_lowerLimit.setValue(self.lower_limit)
@@ -1215,7 +1285,7 @@ class MainWindow(QDialog):
             old_model = self.cleaned_model
             cleaned = self._decode_model_text(text)
             self.cleaned_model = cleaned
-            self.ui.pushButton_model.setText(cleaned if cleaned else "Model")
+            self._set_model_text(cleaned)
             self.load_model_limits()
             self.load_model_spec()
             self.save_config()
@@ -1464,7 +1534,7 @@ class MainWindow(QDialog):
                       else "  (TC: no temperature!)")
         if title != self._measure_title:
             self._measure_title = title
-            self.ui.groupBox_MeasureValue.setTitle(title)
+            self._apply_measure_title()
 
     # ── RS485 temperature sensor ──────────────────────────────────────────────
 
@@ -1615,6 +1685,7 @@ class MainWindow(QDialog):
             )
             card.setCheckable(True)
             card.setMinimumHeight(self._px(76))
+            card.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
             card.setStyleSheet(POINT_CARD_QSS)
             card.clicked.connect(
                 lambda _checked=False, idx=i: self.on_point_card_tapped(idx))
@@ -1722,7 +1793,7 @@ class MainWindow(QDialog):
         if resp == QMessageBox.StandardButton.Yes:
             old = self.cleaned_model
             self.cleaned_model = model
-            self.ui.pushButton_model.setText(model)
+            self._set_model_text(model)
             self.load_model_limits()
             self.load_model_spec()
             self.save_config()
@@ -1873,7 +1944,7 @@ class MainWindow(QDialog):
         self.log_event(f"Barcode scan: '{raw}' → '{decoded}'")
         old_model = self.cleaned_model
         self.cleaned_model = decoded
-        self.ui.pushButton_model.setText(decoded)
+        self._set_model_text(decoded)
         self.load_model_limits()
         self.load_model_spec()
         self.save_config()
@@ -2083,7 +2154,7 @@ class MainWindow(QDialog):
                     cleaned_model = self._decode_model_text(text)
                     self.log_model_change("CHANGE", "", cleaned_model, "prompt")
                     self.cleaned_model = cleaned_model
-                    self.ui.pushButton_model.setText(cleaned_model if cleaned_model else "Model")
+                    self._set_model_text(cleaned_model)
                     self.load_model_spec()
                     print(f"DEBUG: Model set via prompt: '{cleaned_model}'")
 
