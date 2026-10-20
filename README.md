@@ -77,7 +77,7 @@ pip install -r requirements.txt
 Edit [insert_resistance2db.py](insert_resistance2db.py) and update the connection parameters:
 
 ```python
-server   = '172.18.72.16'     # SQL Server IP or hostname
+server   = '---.---.---.---'     # SQL Server IP or hostname
 database = 'ENGINEER_DB'
 username = 'engineering_user'
 password = 'Engineering@user'
