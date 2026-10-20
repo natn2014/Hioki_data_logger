@@ -16,19 +16,19 @@ import serial
 import serial.tools.list_ports
 from datetime import datetime
 from threading import Thread
-from PySide6.QtCore import QTimer, QThread, Signal, Qt, QStringListModel, QEvent, QUrl
+from PySide6.QtCore import QTimer, QThread, Signal, Qt, QEvent, QUrl
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtWidgets import (
     QApplication, QDialog, QMessageBox, QAbstractSpinBox,
     QPushButton, QHBoxLayout, QVBoxLayout, QLabel, QLineEdit, QDoubleSpinBox,
-    QScrollArea, QWidget
+    QScrollArea, QScroller, QWidget
 )
-from PySide6.QtGui import QFont
+from html import escape
 from usb_rs import Usb_rs
 from insert_resistance2db import (
     insert_to_mssql, fetch_model_spec, upsert_model_spec, check_schema
 )
-from ui_UI_Resistance import Ui_Dialog
+from ui_UI_Resistance import Ui_Dialog, PointCard, build_qss, set_prop, C as UI_COLORS
 from numpad_dialog import NumpadDialog
 from keyboard_dialog import KeyboardDialog
 from db_upload_manager import DBUploadManager, UploadSignals, SpecQueueManager
@@ -58,25 +58,25 @@ STALL_CHECK_MS = 2000
 HEARTBEAT_FILE = "heartbeat.txt"
 HEARTBEAT_MIN_INTERVAL_S = 5.0  # throttle disk writes to spare the SD card
 
-# Tappable point card: normal / active (checked) / pressed states. Sized for
-# fingertips on the touch panel.
-POINT_CARD_QSS = """
-QPushButton {
-    background-color: #eceff1;
-    border: 2px solid #b0bec5;
-    border-radius: 10px;
-    padding: 6px 4px;
-    color: #37474f;
-    font-size: 15px;
+# USB status chip: state -> (text, style state).
+USB_STATES = {
+    "connected":    ("● Connected",    "ok"),
+    "connecting":   ("◌ Connecting",   "warn"),
+    "disconnected": ("○ Disconnected", "bad"),
 }
-QPushButton:checked {
-    background-color: #e0f7fa;
-    border: 3px solid #00acc1;
-    color: #006064;
-    font-weight: bold;
-}
-QPushButton:pressed { background-color: #b2ebf2; }
-"""
+
+
+def ui_scale():
+    """Layout scale vs. the 1280x800 design size (1.0 on the 10.1" panel)."""
+    screen = QApplication.primaryScreen().availableGeometry()
+    return min(screen.width() / 1280.0, screen.height() / 800.0, 1.0)
+
+
+def enable_touch_scroll(area):
+    """Drag-to-scroll with kinetic flick for a scroll area on the touch panel.
+    LeftMouseButtonGesture also covers touch, which xcb delivers as mouse."""
+    QScroller.grabGesture(area.viewport(), QScroller.ScrollerGestureType.LeftMouseButtonGesture)
+
 
 # AIM Code 39 Extended escape sequences (see barcodereader.md)
 AIM_MAP = {
@@ -234,14 +234,20 @@ class ModelSpecDialog(QDialog):
     def __init__(self, model="", points=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Register / Edit Model Spec")
+        self.setObjectName("SpecDialog")   # scopes the input/button styles
         self.setModal(True)
         self._rows = []          # [{widget, seq, name, lower, upper}, ...]
         self._result = None
         self._scan_fields = []   # text fields that cleanse scanned barcodes
+        scale = ui_scale()
+        self._px = lambda v: max(1, round(v * scale))
+        px = self._px
 
         outer = QVBoxLayout(self)
+        outer.setContentsMargins(px(20), px(16), px(20), px(16))
+        outer.setSpacing(px(12))
 
-        outer.addWidget(QLabel("Model name  (type or scan barcode)"))
+        outer.addWidget(self._caption("MODEL NAME  ·  tap to type, or scan the part barcode"))
         self.model_edit = QLineEdit(model)
         self.model_edit.setPlaceholderText("e.g. 750X — or scan the part barcode")
         self.model_edit.setMaxLength(100)
@@ -249,33 +255,42 @@ class ModelSpecDialog(QDialog):
         outer.addWidget(self.model_edit)
 
         hdr = QHBoxLayout()
-        hdr.addWidget(QLabel("Measurement points (probed in this order)"))
+        hdr.addWidget(self._caption("MEASUREMENT POINTS  ·  probed in this order  ·  tap a value to edit"))
         hdr.addStretch(1)
-        self.add_btn = QPushButton("＋ Add point")
+        self.add_btn = QPushButton("＋  Add point")
+        self.add_btn.setProperty("role", "dlg")
         self.add_btn.clicked.connect(lambda: (self._add_row(), None)[1])
         hdr.addWidget(self.add_btn)
         outer.addLayout(hdr)
 
         self.rows_container = QWidget()
+        self.rows_container.setObjectName("rows_container")
         self.rows_layout = QVBoxLayout(self.rows_container)
-        self.rows_layout.setContentsMargins(0, 0, 0, 0)
+        self.rows_layout.setContentsMargins(0, 0, px(8), 0)
+        self.rows_layout.setSpacing(px(10))
         self.rows_layout.addStretch(1)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setWidget(self.rows_container)
-        scroll.setMinimumHeight(230)
-        outer.addWidget(scroll, 1)
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setWidget(self.rows_container)
+        self.scroll.setMinimumHeight(px(300))
+        enable_touch_scroll(self.scroll)
+        outer.addWidget(self.scroll, 1)
 
         self.err_label = QLabel("")
         self.err_label.setWordWrap(True)
-        self.err_label.setStyleSheet("color: #f44336; font-weight: bold;")
+        self.err_label.setStyleSheet(
+            f"color: {UI_COLORS['fail']}; font-weight: bold; font-size: {px(18)}px;")
         outer.addWidget(self.err_label)
 
         btns = QHBoxLayout()
         cancel = QPushButton("Cancel")
+        cancel.setProperty("role", "dlg")
         cancel.setAutoDefault(False)
         cancel.clicked.connect(self.reject)
-        save = QPushButton("Save to DB")
+        save = QPushButton("✓  Save to DB")
+        save.setProperty("role", "primary")
+        for b in (cancel, save):
+            b.setMinimumSize(px(200), px(64))
         # Not the default button: a barcode scan ends with Enter, and we must not
         # let that trailing Enter submit the dialog — it only cleanses the field.
         save.setAutoDefault(False)
@@ -291,15 +306,26 @@ class ModelSpecDialog(QDialog):
         else:
             self._add_row()
 
-        self.resize(580, 500)
+        # Most of the 1280x800 screen: rows stay finger-sized, ~5 visible at once.
+        self.resize(px(1080), px(700))
+
+    @staticmethod
+    def _caption(text):
+        lbl = QLabel(text)
+        lbl.setProperty("role", "caption")
+        return lbl
 
     def _add_row(self, name="", lower=None, upper=None):
+        px = self._px
         row_w = QWidget()
         h = QHBoxLayout(row_w)
         h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(px(10))
 
         seq_lbl = QLabel(str(len(self._rows) + 1))
-        seq_lbl.setFixedWidth(24)
+        seq_lbl.setFixedWidth(px(36))
+        seq_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        seq_lbl.setStyleSheet(f"font-size: {px(22)}px; font-weight: bold; color: {UI_COLORS['accent_hi']};")
         name_edit = QLineEdit(name)
         name_edit.setPlaceholderText("A-B")
         name_edit.setMaxLength(50)
@@ -311,20 +337,26 @@ class ModelSpecDialog(QDialog):
             sp.setRange(0.0, 9999.0)
             sp.setDecimals(SPEC_DECIMALS)
             sp.setSingleStep(0.01)
-            sp.lineEdit().installEventFilter(self)  # tap opens numpad
+            # Tap opens the numpad; spin arrows are too small to hit by finger.
+            sp.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+            sp.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            sp.setSuffix(" Ω")
+            sp.setFixedWidth(px(180))
+            sp.lineEdit().installEventFilter(self)
         if lower is not None:
             lower_spin.setValue(float(lower))
         if upper is not None:
             upper_spin.setValue(float(upper))
 
         rm_btn = QPushButton("✕")
-        rm_btn.setFixedWidth(40)
+        rm_btn.setProperty("role", "danger")
+        rm_btn.setFixedSize(px(64), px(56))
 
         h.addWidget(seq_lbl)
         h.addWidget(name_edit, 1)
-        h.addWidget(QLabel("L"))
+        h.addWidget(self._caption("LOWER"))
         h.addWidget(lower_spin)
-        h.addWidget(QLabel("U"))
+        h.addWidget(self._caption("UPPER"))
         h.addWidget(upper_spin)
         h.addWidget(rm_btn)
 
@@ -334,6 +366,7 @@ class ModelSpecDialog(QDialog):
                "lower": lower_spin, "upper": upper_spin}
         self._rows.append(rec)
         rm_btn.clicked.connect(lambda: self._remove_row(rec))
+        QTimer.singleShot(0, lambda: self.scroll.ensureWidgetVisible(row_w))
 
     def _remove_row(self, rec):
         if rec["name"] in self._scan_fields:
@@ -569,6 +602,10 @@ class MainWindow(QDialog):
         # over-range/OL). True = keep showing the last reading (default, as
         # before); False = release the display to 0. Persisted in config.
         self.hold_previous = True
+        # What the measured panel currently shows, so standby can keep it on
+        # screen dimmed (hold mode) against the range it was judged on.
+        self._display_value = None
+        self._display_range = (None, None)
 
         # Multi-point spec sequence for the current model. Empty list == the
         # legacy single-range behaviour (self.lower_limit / self.upper_limit).
@@ -630,65 +667,36 @@ class MainWindow(QDialog):
         self.run_schema_check()
 
     def init_ui(self):
-        self.ui = Ui_Dialog()
+        scale = ui_scale()
+        # App-wide so the dialogs and QMessageBoxes get the same touch sizing.
+        QApplication.instance().setStyleSheet(build_qss(scale))
+        self.ui = Ui_Dialog(scale)
         self.ui.setupUi(self)
         self.setWindowTitle("HIOKI Auto Hold Mode (Mode 5)")
-        self._apply_ui_scale()
 
-        # Configure spinboxes for limits
-        self.ui.doubleSpinBox_lowerLimit.setRange(0.01, 9999.0)
-        self.ui.doubleSpinBox_lowerLimit.setDecimals(SPEC_DECIMALS)
-        self.ui.doubleSpinBox_lowerLimit.setSingleStep(0.01)
-        self.ui.doubleSpinBox_lowerLimit.setValue(self.lower_limit)
-        self.ui.doubleSpinBox_lowerLimit.valueChanged.connect(self.on_limit_changed)
+        # Limit tiles: tap to edit in single-range mode; locked while a point
+        # sequence drives them (see _refresh_limits_ui).
+        self.ui.btn_upper.clicked.connect(lambda: self._edit_limit("upper"))
+        self.ui.btn_lower.clicked.connect(lambda: self._edit_limit("lower"))
 
-        self.ui.doubleSpinBox_UpperLimit.setRange(0.01, 9999.0)
-        self.ui.doubleSpinBox_UpperLimit.setDecimals(SPEC_DECIMALS)
-        self.ui.doubleSpinBox_UpperLimit.setSingleStep(0.01)
-        self.ui.doubleSpinBox_UpperLimit.setValue(self.upper_limit)
-        self.ui.doubleSpinBox_UpperLimit.valueChanged.connect(self.on_limit_changed)
-
-        # Open numpad on click for limit spinboxes
-        self.ui.doubleSpinBox_UpperLimit.lineEdit().installEventFilter(self)
-        self.ui.doubleSpinBox_lowerLimit.lineEdit().installEventFilter(self)
-
-        # Measurement display is read-only
-        self.ui.doubleSpinBox_Measure.setReadOnly(True)
-        self.ui.doubleSpinBox_Measure.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
-
-        # Logger model for list view
-        self.log_model = QStringListModel()
-        self.ui.listView_logger.setModel(self.log_model)
-
-        # Button for model input
+        enable_touch_scroll(self.ui.textBrowser_log)
+        enable_touch_scroll(self.ui.point_cards_area)
         self.ui.pushButton_model.clicked.connect(self.on_model_clicked)
 
-        # Judgement button used as status indicator
-        self.ui.pushButton_Judgement.setEnabled(False)
-
-        # Point-sequence cards: one tappable card per point, sitting between the
-        # measured value and the judgement. Tapping a card jumps straight to that
-        # point — this replaces the old Prev/Next stepping buttons.
-        self.point_cards_row = QHBoxLayout()
+        # Point-sequence cards: one tappable card per point. Tapping a card jumps
+        # straight to that point. cycle_results holds this part's per-point
+        # outcome ({index: (pass, value_text)}), cleared when point 1 is recorded.
+        self.point_cards_row = self.ui.point_cards_row
         self.point_cards = []
-        self.ui.verticalLayout.insertLayout(2, self.point_cards_row)
+        self.cycle_results = {}
 
-        # Remaining controls (added programmatically so the generated UI file
-        # stays untouched). Reset needs an active sequence; Edit Spec never does.
-        self.point_button_row = QHBoxLayout()
-        self.btn_reset_point = QPushButton("⟲ Reset to first point")
-        self.btn_new_model = QPushButton("＋ New Model")
-        self.btn_edit_spec = QPushButton("⚙ Edit Spec")
+        self.btn_reset_point = self.ui.btn_reset_point
+        self.btn_new_model = self.ui.btn_new_model
+        self.btn_edit_spec = self.ui.btn_edit_spec
         # Force-uploads pending_uploads.json now, skipping the retry timer/backoff.
-        self.btn_upload_now = QPushButton("⬆ Upload Now")
+        self.btn_upload_now = self.ui.btn_upload_now
         # Toggle: hold the last reading vs. release the display to 0 in standby.
-        self.btn_hold_toggle = QPushButton()
-        self.btn_hold_toggle.setCheckable(True)
-        for b in (self.btn_reset_point, self.btn_new_model,
-                  self.btn_edit_spec, self.btn_upload_now, self.btn_hold_toggle):
-            b.setMinimumHeight(48)
-            self.point_button_row.addWidget(b)
-        self.ui.groupBox_Judge.layout().addLayout(self.point_button_row)
+        self.btn_hold_toggle = self.ui.btn_hold_toggle
         self.btn_reset_point.clicked.connect(self.on_reset_point)
         self.btn_new_model.clicked.connect(self.on_new_model_clicked)
         self.btn_edit_spec.clicked.connect(self.on_edit_spec_clicked)
@@ -696,6 +704,17 @@ class MainWindow(QDialog):
         self.btn_hold_toggle.toggled.connect(self.on_hold_toggle)
         self._apply_hold_toggle_ui()   # reflect the (default) hold_previous state
         self._apply_point_to_ui()  # builds cards + sets initial enabled state
+
+        # Pass/fail counters: today's readings for the current model (seeded
+        # from the daily CSV in _load_counts, then counted live).
+        self.counts = {"OK": 0, "NG": 0}
+        self._counts_key = None
+        self.reading_count = 0
+
+        self.clock_timer = QTimer(self)
+        self.clock_timer.timeout.connect(self._tick_clock)
+        self.clock_timer.start(1000)
+        self._tick_clock()
 
         # Check if there are pending uploads to retry
         pending_count = self.db_manager.get_pending_count()
@@ -709,97 +728,142 @@ class MainWindow(QDialog):
             self.append_log(f"! {pending_specs} model spec(s) waiting to upload")
 
         # Initialise status badges and start background WiFi monitor
+        self._db_online = None   # unknown until the first DB round-trip
         self._set_usb_status("disconnected")
+        self._refresh_db_status()
         self.wifi_thread = WiFiWorkerThread()
         self.wifi_thread.wifi_ready.connect(self._on_wifi_ready)
         self.wifi_thread.start()
 
-    def _apply_ui_scale(self):
-        screen = QApplication.primaryScreen().availableGeometry()
-        scale = min(screen.width() / 1280.0, screen.height() / 800.0, 1.0)
-
-        def sf(pt, bold=False):
-            f = QFont()
-            f.setPointSize(max(8, round(pt * scale)))
-            if bold:
-                f.setBold(True)
-                f.setWeight(QFont.Weight.Bold)
-            return f
-
-        def px(v):
-            return max(1, round(v * scale))
-
-        ui = self.ui
-        ui.groupBox_status.setFont(sf(12))
-        ui.label_usb_status.setFont(sf(13, bold=True))
-        ui.label_wifi.setFont(sf(13, bold=True))
-        ui.pushButton_model.setFont(sf(25))
-        ui.pushButton_model.setMinimumHeight(px(80))
-
-        ui.groupBox_Resistance.setFont(sf(12))
-        ui.groupBox_MeasureValue.setFont(sf(24, bold=True))
-        ui.doubleSpinBox_Measure.setFont(sf(72, bold=True))
-
-        ui.groupBox_UpperLimit.setFont(sf(18))
-        ui.doubleSpinBox_UpperLimit.setFont(sf(30))
-        ui.groupBox_LowerLimit.setFont(sf(18))
-        ui.doubleSpinBox_lowerLimit.setFont(sf(30))
-
-        ui.groupBox_Judge.setFont(sf(12))
-        ui.pushButton_Judgement.setFont(sf(48))
-
-        ui.groupBox.setFont(sf(12))
+    def _tick_clock(self):
+        now = datetime.now()
+        self.ui.label_clock.setText(now.strftime("%H:%M"))
+        if self._counts_key and self._counts_key[1] != now.date():
+            self._load_counts()   # midnight: start the new day's counters
 
     def _set_usb_status(self, state):
-        props = {
-            "connected":    ("● USB  Connected",    "#4CAF50"),
-            "connecting":   ("◌ USB  Connecting",   "#FF9800"),
-            "disconnected": ("○ USB  Disconnected", "#f44336"),
-        }
-        text, color = props.get(state, ("○ USB  Disconnected", "#f44336"))
+        text, style = USB_STATES.get(state, USB_STATES["disconnected"])
         self.ui.label_usb_status.setText(text)
-        self.ui.label_usb_status.setStyleSheet(
-            f"color: {color}; font-weight: bold; "
-            f"border: 2px solid {color}; border-radius: 6px; padding: 4px 10px;"
-        )
+        set_prop(self.ui.label_usb_status, "state", style)
+        if state != "connected":
+            self._show_reading("idle", status={
+                "connecting": "connecting to meter…",
+            }.get(state, "meter disconnected — check the USB cable"))
 
     def _on_wifi_ready(self, pct):
         if pct < 0:
-            self.ui.label_wifi.setText("WiFi  ---")
-            self.ui.label_wifi.setStyleSheet("color: #888; font-weight: bold;")
+            self.ui.label_wifi.setText("○ ---")
+            set_prop(self.ui.label_wifi, "state", "off")
             return
         bar_chars = "▂▄▆█"
         n = 0 if pct < 20 else 1 if pct < 40 else 2 if pct < 60 else 3 if pct < 80 else 4
         bars = ''.join(bar_chars[i] if i < n else '░' for i in range(4))
-        color = "#4CAF50" if pct >= 70 else "#FF9800" if pct >= 40 else "#f44336"
-        self.ui.label_wifi.setText(f"WiFi {bars} {pct}%")
-        self.ui.label_wifi.setStyleSheet(f"color: {color}; font-weight: bold;")
+        self.ui.label_wifi.setText(f"{bars} {pct}%")
+        set_prop(self.ui.label_wifi, "state",
+                 "ok" if pct >= 70 else "warn" if pct >= 40 else "bad")
 
-    def eventFilter(self, source, event):
-        if event.type() == QEvent.Type.MouseButtonPress:
-            # While a point sequence drives the limits they are read-only; skip
-            # the numpad so operators can't override the active point's range.
-            if source is self.ui.doubleSpinBox_UpperLimit.lineEdit():
-                if not self.ui.doubleSpinBox_UpperLimit.isReadOnly():
-                    self._show_numpad_for_spinbox(self.ui.doubleSpinBox_UpperLimit, "Upper Limit")
-                return True
-            elif source is self.ui.doubleSpinBox_lowerLimit.lineEdit():
-                if not self.ui.doubleSpinBox_lowerLimit.isReadOnly():
-                    self._show_numpad_for_spinbox(self.ui.doubleSpinBox_lowerLimit, "Lower Limit")
-                return True
-        return super().eventFilter(source, event)
+    def _refresh_db_status(self):
+        """DB chip + Upload button: reachability and how much is queued."""
+        pending = self.db_manager.get_pending_count()
+        specs = self.spec_queue.pending_count()
+        queued = pending + specs
+        if self._db_online is False:
+            text, style = (f"○ Offline · {queued}" if queued else "○ Offline"), "bad"
+        elif queued:
+            text, style = f"⬆ {queued} queued", "warn"
+        elif self._db_online:
+            text, style = "● Online", "ok"
+        else:
+            text, style = "◌ ---", "off"
+        self.ui.label_db.setText(text)
+        set_prop(self.ui.label_db, "state", style)
+        self.btn_upload_now.setText(f"⬆  Upload ({queued})" if queued else "⬆  Upload now")
+        set_prop(self.btn_upload_now, "attention", bool(queued))
 
-    def _show_numpad_for_spinbox(self, spinbox, label):
+    def _set_db_online(self, online):
+        self._db_online = online
+        self._refresh_db_status()
+
+    def _set_model_text(self, text):
+        self.ui.label_model_name.setText(text if text else "Tap to set model")
+        set_prop(self.ui.label_model_name, "empty", not text)
+        # A previous model's PASS/FAIL must not linger under the new name.
+        self.ui.label_verdict.setText("— — —")
+        self.ui.label_verdict_detail.setText("no reading yet for this model")
+        set_prop(self.ui.frame_verdict, "state", "idle")
+        self._load_counts()
+
+    def _refresh_limits_ui(self, editable):
+        """Show self.lower_limit/upper_limit on the tiles (and the gauge)."""
+        tag = "TAP TO EDIT" if editable else "LOCKED"
+        for btn, value_lbl, tag_lbl, v in (
+                (self.ui.btn_upper, self.ui.label_upper_value, self.ui.label_upper_tag, self.upper_limit),
+                (self.ui.btn_lower, self.ui.label_lower_value, self.ui.label_lower_tag, self.lower_limit)):
+            value_lbl.setText(f"{v:.{SPEC_DECIMALS}f}")
+            tag_lbl.setText(tag)
+            set_prop(btn, "editable", editable)
+        self.ui.gauge.set_range(self.lower_limit, self.upper_limit)
+
+    def _edit_limit(self, which):
+        # While a point sequence drives the limits they are read-only; skip
+        # the numpad so operators can't override the active point's range.
+        if self.current_point() is not None:
+            self.append_log("Limits come from the point spec — use ✎ Edit spec to change them")
+            return
+        current = self.upper_limit if which == "upper" else self.lower_limit
         dlg = NumpadDialog(
-            current_value=spinbox.value(),
-            decimals=spinbox.decimals(),
-            title=label,
-            min_val=spinbox.minimum(),
-            max_val=spinbox.maximum(),
-            parent=self,
+            current_value=current, decimals=SPEC_DECIMALS,
+            title="Upper Limit (Ω)" if which == "upper" else "Lower Limit (Ω)",
+            min_val=0.01, max_val=9999.0, parent=self,
         )
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            spinbox.setValue(dlg.get_value())
+            if which == "upper":
+                self.upper_limit = dlg.get_value()
+            else:
+                self.lower_limit = dlg.get_value()
+            self.on_limit_changed()
+
+    def _show_reading(self, state, value=None, status="", lo=None, hi=None):
+        """Drive the measured-value panel.
+
+        state: idle | settling | stable | pass | fail | standby. The gauge shows
+        the value against lo/hi (default: the active limits) so a recorded
+        reading stays drawn against the range it was judged on even after the
+        sequence has advanced to the next point.
+        """
+        lbl = self.ui.label_measure_value
+        if value is None:
+            lbl.setText("-.---")
+        else:
+            try:
+                lbl.setText(f"{float(value):.3f}")
+            except (TypeError, ValueError):
+                lbl.setText(str(value))
+        set_prop(lbl, "state", state)
+        self.ui.label_measure_status.setText(status)
+        try:
+            num = float(value) if value is not None else None
+        except (TypeError, ValueError):
+            num = None
+        # Blank rather than hide the unit so the number doesn't shift sideways.
+        self.ui.label_unit.setText("Ω" if num is not None else "")
+        self.ui.gauge.set_range(self.lower_limit if lo is None else lo,
+                                self.upper_limit if hi is None else hi)
+        self.ui.gauge.set_value(num, state)
+
+    def _show_waiting(self):
+        """Open circuit (probes lifted): show WAITING. Hold mode keeps the last
+        reading on screen, dimmed; Release mode replaces it with WAITING."""
+        status = "waiting · open circuit" + self._probe_hint()
+        if self.hold_previous and self._display_value is not None:
+            self._show_reading("standby", self._display_value,
+                               status + " · holding last reading", *self._display_range)
+        else:
+            self._show_reading("standby", "WAITING", status)
+
+    def _probe_hint(self):
+        p = self.current_point()
+        return f" · probe {p['name']}" if p else ""
 
     def start_auto_detect(self):
         if self.connected or self.detect_in_progress:
@@ -855,13 +919,8 @@ class MainWindow(QDialog):
 
         # Push loaded values into UI
         self._apply_hold_toggle_ui()
-        self.ui.pushButton_model.setText(self.cleaned_model if self.cleaned_model else "Model")
-        self.ui.doubleSpinBox_lowerLimit.blockSignals(True)
-        self.ui.doubleSpinBox_UpperLimit.blockSignals(True)
-        self.ui.doubleSpinBox_lowerLimit.setValue(self.lower_limit)
-        self.ui.doubleSpinBox_UpperLimit.setValue(self.upper_limit)
-        self.ui.doubleSpinBox_lowerLimit.blockSignals(False)
-        self.ui.doubleSpinBox_UpperLimit.blockSignals(False)
+        self._set_model_text(self.cleaned_model)
+        self._refresh_limits_ui(editable=True)
 
         # Load the point sequence (if any) for the startup model.
         self.load_model_spec()
@@ -923,9 +982,10 @@ class MainWindow(QDialog):
             return ""
 
     def on_limit_changed(self):
-        """Update limits when spinbox values change"""
-        self.lower_limit = self.ui.doubleSpinBox_lowerLimit.value()
-        self.upper_limit = self.ui.doubleSpinBox_UpperLimit.value()
+        """Persist and show limits after a single-range edit on the numpad."""
+        if self.lower_limit >= self.upper_limit:
+            self.append_log("! Lower limit is not below the upper limit — every reading will FAIL")
+        self._refresh_limits_ui(editable=True)
         self.save_config()
 
     def get_daily_csv_path(self, current_time):
@@ -1005,7 +1065,7 @@ class MainWindow(QDialog):
             old_model = self.cleaned_model
             cleaned = self._decode_model_text(text)
             self.cleaned_model = cleaned
-            self.ui.pushButton_model.setText(cleaned if cleaned else "Model")
+            self._set_model_text(cleaned)
             self.load_model_limits()
             self.load_model_spec()
             self.save_config()
@@ -1021,12 +1081,7 @@ class MainWindow(QDialog):
                     if self.cleaned_model and self.cleaned_model in models:
                         self.lower_limit = models[self.cleaned_model].get("lower_limit", 0.0)
                         self.upper_limit = models[self.cleaned_model].get("upper_limit", 1000.0)
-                        self.ui.doubleSpinBox_lowerLimit.blockSignals(True)
-                        self.ui.doubleSpinBox_UpperLimit.blockSignals(True)
-                        self.ui.doubleSpinBox_lowerLimit.setValue(self.lower_limit)
-                        self.ui.doubleSpinBox_UpperLimit.setValue(self.upper_limit)
-                        self.ui.doubleSpinBox_lowerLimit.blockSignals(False)
-                        self.ui.doubleSpinBox_UpperLimit.blockSignals(False)
+                        self._refresh_limits_ui(editable=self.current_point() is None)
                         print(f"DEBUG: Loaded limits for model '{self.cleaned_model}': {self.lower_limit} - {self.upper_limit}")
         except Exception as e:
             print(f"Error loading model limits: {e}")
@@ -1125,27 +1180,22 @@ class MainWindow(QDialog):
         self.btn_hold_toggle.blockSignals(True)
         self.btn_hold_toggle.setChecked(self.hold_previous)
         self.btn_hold_toggle.blockSignals(False)
-        if self.hold_previous:
-            self.btn_hold_toggle.setText("⏸ Hold Reading")
-            self.btn_hold_toggle.setStyleSheet(
-                "QPushButton{background:#2c3e50;color:white;border-radius:6px;}")
-        else:
-            self.btn_hold_toggle.setText("⤓ Release to 0")
-            self.btn_hold_toggle.setStyleSheet(
-                "QPushButton{background:#16a085;color:white;border-radius:6px;}")
+        # Label states the *current* mode; checked (highlighted) = hold.
+        self.btn_hold_toggle.setText("◼  Hold reading" if self.hold_previous
+                                     else "↧  Release")
 
     def on_hold_toggle(self, checked):
         """Toggle whether the measure display holds the last reading or releases
         to 0 while the meter is in standby (probes lifted / over-range)."""
         self.hold_previous = checked
         self._apply_hold_toggle_ui()
-        mode = "hold last reading" if checked else "release to 0"
+        mode = "hold last reading" if checked else "release (show WAITING)"
         self.log_event(f"Measure display mode: {mode}")
         self.append_log(f"Display mode → {mode}")
-        # In release mode, clear a stale held value immediately so the change is
-        # visible without waiting for the next standby poll.
+        # In release mode, replace a stale held value with WAITING immediately so
+        # the change is visible without waiting for the next standby poll.
         if not checked:
-            self.ui.doubleSpinBox_Measure.setValue(0.0)
+            self._show_waiting()
         self.save_config()
 
     def on_point_card_tapped(self, index):
@@ -1168,29 +1218,46 @@ class MainWindow(QDialog):
         while self.point_cards_row.count():
             item = self.point_cards_row.takeAt(0)
             w = item.widget()
-            if w is not None:
+            if w is self.ui.label_single_hint:
+                w.hide()   # reused, not deleted
+            elif w is not None:
                 w.setParent(None)
                 w.deleteLater()
         self.point_cards = []
 
+        self.cycle_results = {}
+        if not self.spec_points:
+            # No sequence: the row explains single-range mode instead.
+            self.point_cards_row.addWidget(self.ui.label_single_hint)
+            self.ui.label_single_hint.show()
         for i, p in enumerate(self.spec_points):
-            card = QPushButton(
-                f"{p['name']}\n{p['lower']:.{SPEC_DECIMALS}f} – {p['upper']:.{SPEC_DECIMALS}f} Ω\nseq {p['seq']}"
+            card = PointCard(
+                p["name"],
+                f"{p['lower']:.{SPEC_DECIMALS}f} – {p['upper']:.{SPEC_DECIMALS}f} Ω",
+                p["seq"],
             )
-            card.setCheckable(True)
-            card.setMinimumHeight(76)
-            card.setStyleSheet(POINT_CARD_QSS)
+            # Up to 4 cards share the row; more scroll sideways (drag/flick).
+            card.setMinimumWidth(round(190 * self.ui.scale))
+            card.setMinimumHeight(round(88 * self.ui.scale))
+            card.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             card.clicked.connect(
                 lambda _checked=False, idx=i: self.on_point_card_tapped(idx))
             self.point_cards_row.addWidget(card)
             self.point_cards.append(card)
+        # The scroll area would squeeze the row below the cards' minimum width
+        # (overlapping them); pin it so extra cards scroll instead.
+        row_min = 0
+        if self.point_cards:
+            row_min = (len(self.point_cards) * self.point_cards[0].minimumWidth()
+                       + (len(self.point_cards) - 1) * self.point_cards_row.spacing())
+        self.ui.point_cards_area.widget().setMinimumWidth(row_min)
         self._cards_sig = self._cards_signature()
 
     def _apply_point_to_ui(self):
-        """Reflect the active point in the limits, group title, and point cards.
+        """Reflect the active point in the limits, probe header, and point cards.
 
-        When a sequence is active the limit spinboxes are driven read-only from
-        the current point; otherwise they stay editable (single-range mode).
+        When a sequence is active the limit tiles are driven (locked) from the
+        current point; otherwise they stay editable (single-range mode).
         Cards are rebuilt only when the point set itself changes, so advancing
         during measurement just re-highlights (no widget churn / flicker).
         """
@@ -1200,28 +1267,29 @@ class MainWindow(QDialog):
         if getattr(self, "_cards_sig", None) != self._cards_signature():
             self._rebuild_point_cards()
         for i, card in enumerate(self.point_cards):
-            card.setChecked(i == self.current_point_index)
+            card.set_active(i == self.current_point_index)
+            res = self.cycle_results.get(i)
+            card.set_result(*(res if res else (None,)))
+        if 0 <= self.current_point_index < len(self.point_cards):
+            # Deferred: a freshly rebuilt row has no geometry until layout runs.
+            card = self.point_cards[self.current_point_index]
+            QTimer.singleShot(0, lambda: card.isVisible()
+                              and self.ui.point_cards_area.ensureWidgetVisible(card))
 
-        self.ui.doubleSpinBox_lowerLimit.setReadOnly(seq_active)
-        self.ui.doubleSpinBox_UpperLimit.setReadOnly(seq_active)
         self.btn_reset_point.setEnabled(seq_active)
 
         if seq_active:
             self.lower_limit = point["lower"]
             self.upper_limit = point["upper"]
-            self.ui.doubleSpinBox_lowerLimit.blockSignals(True)
-            self.ui.doubleSpinBox_UpperLimit.blockSignals(True)
-            self.ui.doubleSpinBox_lowerLimit.setValue(point["lower"])
-            self.ui.doubleSpinBox_UpperLimit.setValue(point["upper"])
-            self.ui.doubleSpinBox_lowerLimit.blockSignals(False)
-            self.ui.doubleSpinBox_UpperLimit.blockSignals(False)
             idx, n = self.current_point_index + 1, len(self.spec_points)
-            self.ui.groupBox_MeasureValue.setTitle(
-                f"Measured — {point['name']} "
-                f"({point['lower']:.{SPEC_DECIMALS}f}–{point['upper']:.{SPEC_DECIMALS}f}Ω)  {idx}/{n}"
-            )
+            self.ui.label_probe_caption.setText("PROBE")
+            self.ui.label_probe_point.setText(point["name"])
+            self.ui.label_point_index.setText(f"point {idx} / {n}")
         else:
-            self.ui.groupBox_MeasureValue.setTitle("Measured")
+            self.ui.label_probe_caption.setText("MEASURED")
+            self.ui.label_probe_point.setText("single range")
+            self.ui.label_point_index.setText("")
+        self._refresh_limits_ui(editable=not seq_active)
 
     # ── Register / edit a model spec (writes resistance_spec) ─────────────────
 
@@ -1291,7 +1359,7 @@ class MainWindow(QDialog):
         if resp == QMessageBox.StandardButton.Yes:
             old = self.cleaned_model
             self.cleaned_model = model
-            self.ui.pushButton_model.setText(model)
+            self._set_model_text(model)
             self.load_model_limits()
             self.load_model_spec()
             self.save_config()
@@ -1306,6 +1374,7 @@ class MainWindow(QDialog):
         norm = self._normalise_points(raw)
 
         self.log_event(f"Spec saved to DB for '{model}' ({count} points)")
+        self._set_db_online(True)
         self.append_log(f"✓ Spec saved: {model} ({count} points)")
         self._adopt_spec(model, norm)
 
@@ -1331,6 +1400,7 @@ class MainWindow(QDialog):
 
         raw = pending[1] if (pending and pending[0] == model) else []
         count = self.spec_queue.queue_spec(model, raw)
+        self._set_db_online(False)
         self.log_event(f"Spec queued offline for '{model}': {err}")
         self.append_log(f"! DB unreachable — spec for {model} queued "
                         f"({count} pending, will upload automatically)")
@@ -1347,6 +1417,7 @@ class MainWindow(QDialog):
     def on_spec_flush_complete(self, flushed, remaining):
         """A queued spec batch reached the DB."""
         self.log_event(f"Spec queue flushed: {flushed} model(s), {remaining} remaining")
+        self._refresh_db_status()
         if remaining:
             self.append_log(f"Spec queue: {flushed} uploaded, {remaining} still pending")
         else:
@@ -1367,6 +1438,7 @@ class MainWindow(QDialog):
         A server that's simply unreachable is not treated as a problem — the
         offline queue handles that and a later check will catch a real mismatch.
         """
+        self._set_db_online(bool(result.get("reachable")) and not result.get("error"))
         if result.get("error") or not result.get("reachable"):
             self.log_event(f"Schema check skipped (DB not reachable): {result.get('error')}")
             return
@@ -1438,7 +1510,7 @@ class MainWindow(QDialog):
         self.log_event(f"Barcode scan: '{raw}' → '{decoded}'")
         old_model = self.cleaned_model
         self.cleaned_model = decoded
-        self.ui.pushButton_model.setText(decoded)
+        self._set_model_text(decoded)
         self.load_model_limits()
         self.load_model_spec()
         self.save_config()
@@ -1511,10 +1583,10 @@ class MainWindow(QDialog):
             self.previous_raw = None
             self.consecutive_same = 0
             self.consecutive_timeouts = 0
-            self.log_model.setStringList([])
 
             self.append_log("Auto Hold enabled. Polling FETC?...")
             self.log_event("Device configured and polling started")
+            self._show_reading("idle", status="ready" + (self._probe_hint() or " · probe the part"))
             # Start background poll thread — all serial I/O moves off the main thread
             self.poll_thread = PollWorkerThread(
                 self.serial_obj, POLL_INTERVAL_MS, health_check_interval=30
@@ -1571,8 +1643,7 @@ class MainWindow(QDialog):
                 self.consecutive_same = 0
                 self.previous_numeric = None
                 self.previous_raw = None
-                if not self.hold_previous:
-                    self.ui.doubleSpinBox_Measure.setValue(0.0)
+                self._show_waiting()
                 return
             if self.previous_numeric is None or abs(current_val - self.previous_numeric) >= stable_eps:
                 self.previous_numeric = current_val
@@ -1595,14 +1666,23 @@ class MainWindow(QDialog):
         # repeating past the record point is the meter auto-holding a captured
         # reading (standby) → blank to 0 without waiting for the eventual "OL".
         # A non-numeric reading (e.g. "OL") is likewise standby.
+        # Colour tells the operator what the number means: amber = settling,
+        # white = stable (about to record), green/red = recorded (set below).
         if not self.hold_previous and self.consecutive_same >= HOLD_RELEASE_AFTER:
-            self.ui.doubleSpinBox_Measure.setValue(0.0)
+            self._show_waiting()
         else:
             try:
-                self.ui.doubleSpinBox_Measure.setValue(float(msg))
+                value = float(msg)
+                if self.consecutive_same == 1:
+                    self._display_value, self._display_range = value, (None, None)
+                    self._show_reading("settling", value, "settling…")
+                elif record:
+                    self._show_reading("stable", value, "stable · recording…")
+                # consecutive_same >= 3: the meter is auto-holding the reading
+                # just recorded — keep its PASS/FAIL colour on screen.
             except ValueError:
                 if not self.hold_previous:
-                    self.ui.doubleSpinBox_Measure.setValue(0.0)
+                    self._show_waiting()
 
         if record:
             # Judge against the current point's range when a sequence is active,
@@ -1630,7 +1710,7 @@ class MainWindow(QDialog):
                     cleaned_model = self._decode_model_text(text)
                     self.log_model_change("CHANGE", "", cleaned_model, "prompt")
                     self.cleaned_model = cleaned_model
-                    self.ui.pushButton_model.setText(cleaned_model if cleaned_model else "Model")
+                    self._set_model_text(cleaned_model)
                     self.load_model_spec()
                     print(f"DEBUG: Model set via prompt: '{cleaned_model}'")
 
@@ -1675,20 +1755,42 @@ class MainWindow(QDialog):
                 db_status = "(DB: Wait 10s)"
                 print(f"DEBUG: Waiting for 10s interval - last insert was {(current_time - self.last_db_insert_time).total_seconds():.1f}s ago")
 
-            point_tag = f"[{p_name}] " if p_name else ""
-            log_line = f"{time_str}  {point_tag}{msg}  {result_text}  {csv_status}  {db_status}"
-            self.append_log(log_line)
+            value_text = f"{resistance_value:.3f}" if isinstance(resistance_value, float) else str(msg)
+            self.append_result(time_str, p_name, value_text, pass_result, result_text,
+                               f"{csv_status} {db_status}")
+            self._count_result(status_for_db, cleaned_model)
 
             # Update judgement indicator
-            self.set_judgement_status(pass_result)
+            judged_lo = self.lower_limit if p_lower is None else p_lower
+            judged_hi = self.upper_limit if p_upper is None else p_upper
+            where = f"{p_name} · " if p_name else ""
+            self.set_judgement_status(
+                pass_result,
+                f"{where}{value_text} Ω  ({judged_lo:.{SPEC_DECIMALS}f} – {judged_hi:.{SPEC_DECIMALS}f})"
+                f"  ·  {time_str[:8]}")
+
+            # Per-point mark on the card for this part (a new part starts at point 1).
+            if self.spec_points:
+                if self.current_point_index == 0:
+                    self.cycle_results = {}
+                self.cycle_results[self.current_point_index] = (pass_result, value_text)
 
             # Auto-advance to the next point in the sequence (wraps to point 1).
             if self.spec_points:
                 self.advance_point()
+
+            verdict = {True: "PASS", False: "FAIL"}.get(pass_result, "N/A")
+            state = {True: "pass", False: "fail"}.get(pass_result, "stable")
+            self._display_value = msg
+            self._display_range = (judged_lo, judged_hi)
+            self._show_reading(state, msg, f"recorded {where}{verdict}"
+                               + (f"  →  next: {self.current_point()['name']}" if self.spec_points else ""),
+                               judged_lo, judged_hi)
         # Removed logging of unstable readings - only log stable data
 
     def on_upload_complete(self, success, error_msg):
         """Callback when async upload completes (runs on main thread)."""
+        self._set_db_online(success)
         if success:
             self.log_event("Database upload successful")
             # Server just confirmed reachable — flush any queued records immediately
@@ -1720,6 +1822,7 @@ class MainWindow(QDialog):
 
     def on_retry_complete(self, success_count, failed_count, remaining_count):
         """Callback when a batch retry finishes (runs on main thread)."""
+        self._set_db_online(success_count > 0 or remaining_count == 0)
         if remaining_count == 0 and success_count > 0:
             self.log_event(f"Batch upload complete: {success_count} record(s) sent")
             self.append_log(f"Batch upload done — {success_count} record(s) sent")
@@ -1776,6 +1879,7 @@ class MainWindow(QDialog):
         signal that stays fresh even while the meter is unplugged and the app is
         merely waiting to reconnect."""
         self._touch_heartbeat()
+        self._refresh_db_status()   # queue grows silently as readings are queued
         # Release any parked orphan whose OS thread the kernel has finally freed.
         if self._orphaned_threads:
             self._orphaned_threads = [
@@ -1931,20 +2035,50 @@ class MainWindow(QDialog):
             self._media_player.setSource(QUrl.fromLocalFile(path))
             self._media_player.play()
 
-    def set_judgement_status(self, pass_result):
-        """Update judgement indicator button based on pass/fail result."""
-        judgement_map = {
-            True: ("PASS", "#4CAF50"),      # Green
-            False: ("FAIL", "#f44336"),     # Red
-            None: ("N/A", "#9e9e9e")        # Gray
-        }
-        text, color = judgement_map.get(pass_result, ("N/A", "#9e9e9e"))
-        self.ui.pushButton_Judgement.setText(text)
-        self.ui.pushButton_Judgement.setStyleSheet(f"background-color: {color}; color: white; font-weight: bold;")
+    def set_judgement_status(self, pass_result, detail=None):
+        """Update the PASS/FAIL banner (and play the voice alert)."""
+        text, state = {True: ("PASS", "pass"), False: ("FAIL", "fail")}.get(
+            pass_result, ("N/A", "na"))
+        self.ui.label_verdict.setText(text)
+        self.ui.label_verdict_detail.setText(detail or "")
+        set_prop(self.ui.frame_verdict, "state", state)
         if pass_result is True:
             self._play_sound("ResistancePass_TH.mp3")
         elif pass_result is False:
             self._play_sound("ResistanceOver_TH.mp3")
+
+    # ── Pass/fail counters (today, current model) ─────────────────────────────
+
+    def _load_counts(self):
+        """Seed today's OK/NG counts for the current model from the daily CSV."""
+        model = self.cleaned_model.strip()
+        today = datetime.now()
+        self._counts_key = (model, today.date())
+        self.counts = {"OK": 0, "NG": 0}
+        path = self.get_daily_csv_path(today)
+        if model and os.path.exists(path):
+            try:
+                with open(path, newline="", encoding="utf-8") as f:
+                    for r in csv.reader(f):
+                        # Model and Status sit at columns 3 and 2 in every layout.
+                        if len(r) > 3 and r[3].strip() == model and r[2] in self.counts:
+                            self.counts[r[2]] += 1
+            except Exception as e:
+                self.log_event(f"Counter: could not read {os.path.basename(path)}: {e}")
+        self._refresh_counts()
+
+    def _count_result(self, status, model):
+        if self._counts_key != (model, datetime.now().date()):
+            self._load_counts()   # already includes the row just written
+        elif status in self.counts:
+            self.counts[status] += 1
+        self._refresh_counts()
+
+    def _refresh_counts(self):
+        ok, ng = self.counts["OK"], self.counts["NG"]
+        self.ui.label_count_ok.setText(str(ok))
+        self.ui.label_count_ng.setText(str(ng))
+        self.ui.label_count_yield.setText(f"{100.0 * ok / (ok + ng):.1f}%" if ok + ng else "—")
 
     def log_event(self, event_text):
         """Log detailed event to console with timestamp for debugging."""
@@ -1952,17 +2086,40 @@ class MainWindow(QDialog):
         full_msg = f"[{timestamp}] {event_text}"
         print(full_msg)
 
-    def append_log(self, text):
-        """Append a line to the list view logger."""
+    def _log_html(self, html):
         try:
-            items = self.log_model.stringList()
-            items.append(text)
-            if len(items) > 500:
-                items = items[-500:]
-            self.log_model.setStringList(items)
-            self.ui.listView_logger.scrollToBottom()
+            log = self.ui.textBrowser_log
+            bar = log.verticalScrollBar()
+            at_bottom = bar.value() >= bar.maximum() - 4
+            log.append(html)
+            # Don't yank the view while the operator is scrolled back reading.
+            if at_bottom:
+                bar.setValue(bar.maximum())
         except RuntimeError:
             pass  # Widget already destroyed during shutdown
+
+    def append_log(self, text):
+        """Append a system/event line to the data log (warnings in amber)."""
+        c = UI_COLORS
+        colour = c["warn"] if text.startswith(("!", "⚠")) else c["pass"] if text.startswith("✓") else c["dim"]
+        self._log_html(f'<span style="color:{colour}">{escape(text)}</span>')
+
+    def append_result(self, time_str, point, value, pass_result, result_text, note):
+        """Append a recorded reading: time · [point] · value · verdict, then
+        the CSV/DB outcome in small dim text."""
+        c = UI_COLORS
+        colour = {True: c["pass"], False: c["fail"]}.get(pass_result, c["na"])
+        verdict = {True: "OK", False: "NG"}.get(pass_result, "N/A")
+        if pass_result is False and ":" in result_text:
+            verdict += " " + result_text.split(":", 1)[1].strip().lower()   # "NG high"
+        point_html = f'<span style="color:{c["accent_hi"]}">[{escape(point)}]</span> ' if point else ""
+        self.reading_count += 1
+        self.ui.label_log_count.setText(f"{self.reading_count} READINGS")
+        self._log_html(
+            f'<span style="color:{c["faint"]}">{escape(time_str[:8])}</span> '
+            f'{point_html}<b>{escape(str(value))} Ω</b> '
+            f'<b style="color:{colour}">{verdict}</b><br>'
+            f'<span style="color:{c["faint"]};font-size:small">&nbsp;&nbsp;{escape(note)}</span>')
 
 
 def main():

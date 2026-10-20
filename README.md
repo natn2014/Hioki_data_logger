@@ -5,12 +5,13 @@ A Python GUI application that reads resistance measurements from HIOKI multimete
 ## Features
 
 - Auto-detects HIOKI devices on available COM ports
+- **Touch-first dark UI for the 10.1" 1280×800 panel** — status chips (USB / Wi-Fi / DB queue), a state-coloured measured value (amber settling → green/red recorded → grey standby) with a tolerance gauge, per-point ✓/✗ cards, a PASS/FAIL banner that names the point and range it was judged on, and today's OK/NG/yield counters. Touch targets are ≥ 56–64 px (~10 mm); lists flick-scroll. Layout lives in [ui_UI_Resistance.py](ui_UI_Resistance.py) (the `.ui` file is no longer the source) and scales down for smaller screens
 - Real-time resistance measurement polling (500 ms interval)
 - **Multi-point spec sequences** — a model can define an ordered list of measurement points (e.g. `A-B = 1–3 Ω`, `B-C = 4–7 Ω`, `D-E = 4–9 Ω`); the app judges each reading against the *current* point's range, records which point it was, then **auto-advances** to the next point and wraps back to point 1 after the last
 - **In-app model registration** — a touchscreen dialog registers a new model or edits an existing spec; on confirm it writes the point sequence to the `resistance_spec` table
 - **Point cards** — tappable cards let the operator jump directly to any point in the sequence (touch-friendly alternative to Prev/Next)
 - **On-screen keyboard & numpad** — full QWERTY keyboard (with a Shift toggle) for model/point names and a numeric keypad for limits; both accept USB barcode-scanner input
-- **Hold / Release display toggle** — choose whether the big measurement value **holds** the last reading in standby (probes lifted) or **releases to 0**; the choice persists across restarts
+- **Hold / Release display toggle** — choose whether the big measurement value **holds** the last reading in standby (probes lifted) or **releases to WAITING**; either way the status line reads "waiting · open circuit" while the probes are lifted; the choice persists across restarts
 - **Audio feedback** — plays a Thai-language voice alert on every PASS (`ResistancePass_TH.mp3`) or FAIL (`ResistanceOver_TH.mp3`)
 - **Barcode scanner input** — USB HID scanner auto-sets the active model; all entry methods share the same unified decode logic (AIM Code 39 Extended, `$`-delimited, and plain text)
 - **Model change log** (`model_changes.csv`) — audit trail of every model switch; used to auto-recover the last model after a crash or reboot
@@ -234,8 +235,8 @@ in **standby** (probes lifted, so the meter reports over-range or `OL`):
 
 | Mode | Button | Behavior in standby |
 |---|---|---|
-| **Hold** (default) | `⏸ Hold Reading` | Keeps showing the last measured value |
-| **Release** | `⤓ Release to 0` | Resets the display to `0` |
+| **Hold** (default) | `◼ Hold reading` | Keeps showing the last measured value (dimmed), status "waiting · open circuit · holding last reading" |
+| **Release** | `↧ Release` | Replaces the value with `WAITING`, status "waiting · open circuit" |
 
 A live reading always overwrites the display on the next poll, so switching modes never
 loses a real measurement. The choice is saved in `gui_mode5_config.json` (`hold_previous`)
