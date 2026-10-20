@@ -42,10 +42,12 @@ CSV_HEADERS = ["Timestamp", "Resistance", "Status", "Model",
                "Date", "Time", "DB_Status"]
 MODEL_CHANGE_LOG = "model_changes.csv"  # persistent record of every model switch
 SPEC_DECIMALS = 2  # decimal places for spec limits (entry, storage, and display)
-# Release mode: the auto-hold meter keeps returning the same held value long
-# after the probes are lifted, so blank the display to 0 once a value has
-# repeated this many polls (i.e. past the record point at consecutive_same == 2).
-HOLD_RELEASE_AFTER = 3
+# Release mode: with HOLD:AUTO ON the meter keeps returning the same held value
+# on every FETC? after the probes are lifted (its over-range/OL comes much
+# later), so a value still repeating this long after it was recorded is treated
+# as open circuit → WAITING. A real over-range waits out the same time, so the
+# recorded value is always readable for RELEASE_AFTER_S first.
+RELEASE_AFTER_S = 3.0
 
 # Serial hardware-hang recovery. A normal poll cycle is <=2 s (FETC? timeout) +
 # 0.5 s interval; if the worker's liveness stamp stops advancing for this long,
@@ -67,8 +69,13 @@ USB_STATES = {
 
 
 def ui_scale():
-    """Layout scale vs. the 1280x800 design size (1.0 on the 10.1" panel)."""
-    screen = QApplication.primaryScreen().availableGeometry()
+    """Layout scale vs. the 1280x800 design size (1.0 on the 10.1" panel).
+
+    Uses the whole screen, not availableGeometry(): the kiosk window is full
+    screen, and the available area shrinks while the desktop panel or the
+    on-screen keyboard (squeekboard) is showing — starting then built the whole
+    UI at 2/3 size."""
+    screen = QApplication.primaryScreen().geometry()
     return min(screen.width() / 1280.0, screen.height() / 800.0, 1.0)
 
 
@@ -606,6 +613,7 @@ class MainWindow(QDialog):
         # screen dimmed (hold mode) against the range it was judged on.
         self._display_value = None
         self._display_range = (None, None)
+        self._recorded_at = 0.0   # when the shown value was recorded (Release timer)
 
         # Multi-point spec sequence for the current model. Empty list == the
         # legacy single-range behaviour (self.lower_limit / self.upper_limit).
@@ -858,6 +866,8 @@ class MainWindow(QDialog):
         if self.hold_previous and self._display_value is not None:
             self._show_reading("standby", self._display_value,
                                status + " · holding last reading", *self._display_range)
+        elif time.time() - self._recorded_at < RELEASE_AFTER_S:
+            return   # keep the just-recorded value readable a moment longer
         else:
             self._show_reading("standby", "WAITING", status)
 
@@ -1637,8 +1647,8 @@ class MainWindow(QDialog):
         stable_eps = 1e-9
         try:
             current_val = float(msg)
-            # Over-range == standby (probes lifted). Hold the last reading, or
-            # release the display to 0 when hold is toggled off.
+            # Over-range == open circuit (probes lifted). Hold the last reading,
+            # or show WAITING when hold is toggled off.
             if abs(current_val) > MAX_VALID_OHMS:
                 self.consecutive_same = 0
                 self.previous_numeric = None
@@ -1662,27 +1672,26 @@ class MainWindow(QDialog):
                 if self.consecutive_same == 2:
                     record = True
 
-        # Update measurement display. In Release mode, a value that keeps
-        # repeating past the record point is the meter auto-holding a captured
-        # reading (standby) → blank to 0 without waiting for the eventual "OL".
-        # A non-numeric reading (e.g. "OL") is likewise standby.
-        # Colour tells the operator what the number means: amber = settling,
-        # white = stable (about to record), green/red = recorded (set below).
-        if not self.hold_previous and self.consecutive_same >= HOLD_RELEASE_AFTER:
+        # Update measurement display. Colour tells the operator what the number
+        # means: amber = settling, white = stable (about to record), green/red =
+        # recorded (set below). In Release mode a recorded value the meter is
+        # still auto-holding RELEASE_AFTER_S later means open circuit → WAITING.
+        if (not self.hold_previous and self.consecutive_same >= 3
+                and time.time() - self._recorded_at >= RELEASE_AFTER_S):
             self._show_waiting()
-        else:
-            try:
-                value = float(msg)
-                if self.consecutive_same == 1:
-                    self._display_value, self._display_range = value, (None, None)
-                    self._show_reading("settling", value, "settling…")
-                elif record:
-                    self._show_reading("stable", value, "stable · recording…")
-                # consecutive_same >= 3: the meter is auto-holding the reading
-                # just recorded — keep its PASS/FAIL colour on screen.
-            except ValueError:
-                if not self.hold_previous:
-                    self._show_waiting()
+            return
+        try:
+            value = float(msg)
+            if self.consecutive_same == 1:
+                self._display_value, self._display_range = value, (None, None)
+                self._show_reading("settling", value, "settling…")
+            elif record:
+                self._show_reading("stable", value, "stable · recording…")
+            # consecutive_same >= 3: the meter is auto-holding the reading
+            # just recorded — keep its PASS/FAIL colour on screen.
+        except ValueError:
+            if not self.hold_previous:
+                self._show_waiting()
 
         if record:
             # Judge against the current point's range when a sequence is active,
@@ -1783,6 +1792,7 @@ class MainWindow(QDialog):
             state = {True: "pass", False: "fail"}.get(pass_result, "stable")
             self._display_value = msg
             self._display_range = (judged_lo, judged_hi)
+            self._recorded_at = time.time()
             self._show_reading(state, msg, f"recorded {where}{verdict}"
                                + (f"  →  next: {self.current_point()['name']}" if self.spec_points else ""),
                                judged_lo, judged_hi)

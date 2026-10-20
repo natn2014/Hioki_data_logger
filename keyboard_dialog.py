@@ -15,7 +15,9 @@ from ui_UI_Resistance import C
 
 
 def _screen_scale():
-    screen = QApplication.primaryScreen().availableGeometry()
+    # Whole screen (see main.ui_scale): the available area shrinks while the
+    # on-screen keyboard is up.
+    screen = QApplication.primaryScreen().geometry()
     return min(screen.width() / 1280.0, screen.height() / 800.0, 1.0)
 
 

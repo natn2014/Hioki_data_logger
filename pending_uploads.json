@@ -1,1 +1,156 @@
-[]
+[
+  {
+    "model": "Test Final1",
+    "value": 10.55,
+    "status": "NG",
+    "point": "A-B",
+    "seq": 1,
+    "lower": 9.0,
+    "upper": 10.5,
+    "timestamp": "2026-10-20T16:26:15.168510",
+    "retry_count": 20
+  },
+  {
+    "model": "Test Final1",
+    "value": 10.56,
+    "status": "NG",
+    "point": "A-B",
+    "seq": 1,
+    "lower": 9.0,
+    "upper": 10.5,
+    "timestamp": "2026-10-20T16:31:18.107741",
+    "retry_count": 0
+  },
+  {
+    "model": "Test Final1",
+    "value": 10.56,
+    "status": "NG",
+    "point": "A-B",
+    "seq": 1,
+    "lower": 9.0,
+    "upper": 10.5,
+    "timestamp": "2026-10-20T16:31:36.655721",
+    "retry_count": 0
+  },
+  {
+    "model": "Test Final1",
+    "value": 10.56,
+    "status": "NG",
+    "point": "A-B",
+    "seq": 1,
+    "lower": 9.0,
+    "upper": 10.5,
+    "timestamp": "2026-10-20T16:31:47.677725",
+    "retry_count": 0
+  },
+  {
+    "model": "Test Final1",
+    "value": 10.55,
+    "status": "NG",
+    "point": "A-B",
+    "seq": 1,
+    "lower": 9.0,
+    "upper": 10.5,
+    "timestamp": "2026-10-20T16:31:53.188782",
+    "retry_count": 0
+  },
+  {
+    "model": "Test Final1",
+    "value": 10.56,
+    "status": "NG",
+    "point": "A-B",
+    "seq": 1,
+    "lower": 9.0,
+    "upper": 10.5,
+    "timestamp": "2026-10-20T16:31:58.200685",
+    "retry_count": 0
+  },
+  {
+    "model": "Test Final1",
+    "value": 10.56,
+    "status": "NG",
+    "point": null,
+    "seq": null,
+    "lower": null,
+    "upper": null,
+    "timestamp": "2026-10-20T16:34:20.492197",
+    "retry_count": 0
+  },
+  {
+    "model": "Test Final1",
+    "value": 10.58,
+    "status": "NG",
+    "point": null,
+    "seq": null,
+    "lower": null,
+    "upper": null,
+    "timestamp": "2026-10-20T16:34:41.537843",
+    "retry_count": 0
+  },
+  {
+    "model": "Test Final1",
+    "value": 10.56,
+    "status": "NG",
+    "point": null,
+    "seq": null,
+    "lower": null,
+    "upper": null,
+    "timestamp": "2026-10-20T16:34:47.048961",
+    "retry_count": 0
+  },
+  {
+    "model": "Test Final1",
+    "value": 10.56,
+    "status": "NG",
+    "point": null,
+    "seq": null,
+    "lower": null,
+    "upper": null,
+    "timestamp": "2026-10-20T16:35:36.008380",
+    "retry_count": 0
+  },
+  {
+    "model": "Test Final1",
+    "value": 10.56,
+    "status": "NG",
+    "point": null,
+    "seq": null,
+    "lower": null,
+    "upper": null,
+    "timestamp": "2026-10-20T16:36:17.634753",
+    "retry_count": 0
+  },
+  {
+    "model": "Test Final1",
+    "value": 10.56,
+    "status": "NG",
+    "point": null,
+    "seq": null,
+    "lower": null,
+    "upper": null,
+    "timestamp": "2026-10-20T16:39:28.122515",
+    "retry_count": 0
+  },
+  {
+    "model": "Test Final1",
+    "value": 10.56,
+    "status": "NG",
+    "point": null,
+    "seq": null,
+    "lower": null,
+    "upper": null,
+    "timestamp": "2026-10-20T16:39:35.137388",
+    "retry_count": 0
+  },
+  {
+    "model": "Test Final1",
+    "value": 10.56,
+    "status": "NG",
+    "point": null,
+    "seq": null,
+    "lower": null,
+    "upper": null,
+    "timestamp": "2026-10-20T16:39:41.150232",
+    "retry_count": 0
+  }
+]

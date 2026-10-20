@@ -55,7 +55,11 @@ while true; do
         NOW=$(date +%s)
         HB_MTIME=$(stat -c %Y "$HEARTBEAT_FILE" 2>/dev/null || echo "$NOW")
         HB_AGE=$((NOW - HB_MTIME))
-        if [ "$HB_AGE" -ge "$MAX_HEARTBEAT_AGE" ]; then
+        # A just-started app hasn't written its first heartbeat yet, so the file
+        # is still stale from the previous (hung) run — give it the same grace,
+        # or every restart is killed at once in a loop.
+        PROC_AGE=$(ps -o etimes= -p "$PID" 2>/dev/null | tr -d ' ')
+        if [ "$HB_AGE" -ge "$MAX_HEARTBEAT_AGE" ] && [ "${PROC_AGE:-0}" -ge "$MAX_HEARTBEAT_AGE" ]; then
             log "STALL DETECTED — heartbeat ${HB_AGE}s old (>= ${MAX_HEARTBEAT_AGE}s) — killing PID $PID"
             kill -9 "$PID"
             consecutive_d=0

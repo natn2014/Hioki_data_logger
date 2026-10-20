@@ -27,3 +27,14 @@ Timestamp,Action,Previous_Model,New_Model,Source
 2026-08-24 08:21:17,STARTUP,,500D,config
 2026-08-24 08:39:37,STARTUP,,500D,config
 2026-10-20 15:29:09,STARTUP,,500D,config
+2026-10-20 15:58:13,STARTUP,,500D,config
+2026-10-20 15:57:54,STARTUP,,500D,config
+2026-10-20 16:01:27,STARTUP,,500D,config
+2026-10-20 16:05:02,CHANGE,500D,Test Final1,spec_editor
+2026-10-20 16:06:58,STARTUP,,Test Final1,config
+2026-10-20 16:07:17,STARTUP,,Test Final1,config
+2026-10-20 16:25:38,STARTUP,,Test Final1,config
+2026-10-20 16:30:00,STARTUP,,Test Final1,config
+2026-10-20 16:33:17,STARTUP,,Test Final1,config
+2026-10-20 16:34:04,STARTUP,,Test Final1,config
+2026-10-20 16:38:15,STARTUP,,Test Final1,config
