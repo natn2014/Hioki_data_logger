@@ -1,0 +1,114 @@
+- generic [ref=f2e2]:
+  - generic [ref=f2e3]:
+    - heading "HIOKI RM3544 · Multi-Point QC Panel" [level=1] [ref=f2e4]
+    - generic [ref=f2e5]: Interactive mockup
+    - generic [ref=f2e6]: simulated meter & database — no hardware required
+    - button "◐ Theme" [ref=f2e7] [cursor=pointer]
+  - tablist [ref=f2e8]:
+    - tab "QC Panel" [ref=f2e9] [cursor=pointer]
+    - tab "＋ Register Model" [ref=f2e10] [cursor=pointer]
+    - tab "🌡 Temperature Correction" [ref=f2e11] [cursor=pointer]
+  - tabpanel [ref=f2e12]:
+    - generic [ref=f2e13]:
+      - region "Device screen" [ref=f2e14]:
+        - generic [ref=f2e15]:
+          - generic [ref=f2e16]:
+            - generic [ref=f2e17]: USB · Meter
+            - generic [ref=f2e18]: Connected
+          - generic [ref=f2e20]:
+            - generic [ref=f2e21]: Wi-Fi · Uplink
+            - generic [ref=f2e22]:
+              - generic [ref=f2e23]: ▂▄▆█
+              - text: 82%
+          - button "Model 500D" [ref=f2e24] [cursor=pointer]:
+            - generic [ref=f2e25]: Model
+            - generic [ref=f2e26]: 500D
+        - generic [ref=f2e27]:
+          - generic [ref=f2e28]:
+            - generic [ref=f2e29]:
+              - generic [ref=f2e30]: Measured — A-B
+              - generic [ref=f2e31]: point 1 / 3
+            - generic [ref=f2e32]: "-.---Ω"
+            - generic [ref=f2e33]: idle — press Start Measuring
+          - generic [ref=f2e35]:
+            - generic [ref=f2e36]:
+              - generic [ref=f2e37]: Upper limit · locked
+              - generic [ref=f2e38]: "3.000"
+            - generic [ref=f2e39]:
+              - generic [ref=f2e40]: Lower limit · locked
+              - generic [ref=f2e41]: "1.000"
+        - generic [ref=f2e42]:
+          - button "A-B · 1.000–3.000 Ω seq 1" [ref=f2e43] [cursor=pointer]:
+            - generic [ref=f2e44]:
+              - text: A-B
+              - generic [ref=f2e45]: ·
+            - generic [ref=f2e46]: 1.000–3.000 Ω
+            - generic [ref=f2e47]: seq 1
+          - button "B-C · 4.000–7.000 Ω seq 2" [ref=f2e48] [cursor=pointer]:
+            - generic [ref=f2e49]:
+              - text: B-C
+              - generic [ref=f2e50]: ·
+            - generic [ref=f2e51]: 4.000–7.000 Ω
+            - generic [ref=f2e52]: seq 2
+          - button "D-E · 4.000–9.000 Ω seq 3" [ref=f2e53] [cursor=pointer]:
+            - generic [ref=f2e54]:
+              - text: D-E
+              - generic [ref=f2e55]: ·
+            - generic [ref=f2e56]: 4.000–9.000 Ω
+            - generic [ref=f2e57]: seq 3
+        - generic [ref=f2e58]: — — —
+        - generic [ref=f2e59]:
+          - button "⟲ Reset to first point" [ref=f2e60] [cursor=pointer]
+          - button "＋ New Model" [ref=f2e61] [cursor=pointer]
+          - button "⚙ Edit Spec" [ref=f2e62] [cursor=pointer]
+          - button "⬆ Upload Now" [ref=f2e63] [cursor=pointer]
+          - button "⏸ Hold Reading" [ref=f2e64] [cursor=pointer]
+        - generic [ref=f2e65]:
+          - generic [ref=f2e66]:
+            - generic [ref=f2e67]: Data log
+            - generic [ref=f2e68]: 0 readings
+          - generic [ref=f2e69]: 10:52:39.856 loaded 3-point spec for 500D
+      - complementary "Simulator controls" [ref=f2e71]:
+        - generic [ref=f2e72]:
+          - heading "SIM Station control" [level=2] [ref=f2e73]:
+            - generic [ref=f2e74]: SIM
+            - text: Station control
+          - button "▶ Start Measuring" [ref=f2e75] [cursor=pointer]
+          - generic [ref=f2e76]:
+            - generic [ref=f2e77]:
+              - generic [ref=f2e78]: Meter link (USB)
+              - generic [ref=f2e79]: "*IDN? → HIOKI RM3544"
+            - checkbox [checked] [ref=f2e81] [cursor=pointer]
+          - generic [ref=f2e82]:
+            - generic [ref=f2e83]:
+              - generic [ref=f2e84]: Database uplink
+              - generic [ref=f2e85]: ENGINEER_DB · resistance
+            - checkbox [checked] [ref=f2e87] [cursor=pointer]
+          - generic [ref=f2e88]:
+            - generic [ref=f2e89]:
+              - generic [ref=f2e90]: Inject a failing part
+              - generic [ref=f2e91]: next point reads out of spec
+            - checkbox [ref=f2e93] [cursor=pointer]
+          - generic [ref=f2e94]:
+            - generic [ref=f2e95]:
+              - generic [ref=f2e96]: Rows inserted
+              - generic [ref=f2e97]: "0"
+            - generic [ref=f2e98]:
+              - generic [ref=f2e99]: Queued (offline)
+              - generic [ref=f2e100]: "0"
+        - generic [ref=f2e101]:
+          - heading "RS-232C Meter feed · FETC?" [level=2] [ref=f2e102]:
+            - generic [ref=f2e103]: RS-232C
+            - text: Meter feed · FETC?
+          - generic [ref=f2e104]: "*IDN? HIOKI,RM3544-01,..."
+        - generic [ref=f2e106]:
+          - heading "SQL Database uplink" [level=2] [ref=f2e107]:
+            - generic [ref=f2e108]: SQL
+            - text: Database uplink
+          - generic [ref=f2e109]: connect OK ENGINEER_DB · resistance / resistance_spec
+          - paragraph [ref=f2e111]:
+            - text: "Turn Database uplink off mid-run: readings queue locally (mirroring"
+            - code [ref=f2e112]: DBUploadManager
+            - text: ), then batch-flush when it comes back — each row carries
+            - code [ref=f2e113]: Point / Seq / LowerLimit / UpperLimit
+            - text: .
