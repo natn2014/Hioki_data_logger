@@ -48,8 +48,10 @@ sudo apt install python3-serial python3-venv python3-pip \
                  unixodbc-dev libglib2.0-0 libdbus-1-3 libxcb-cursor-dev \
                  gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
                  gstreamer1.0-alsa gstreamer1.0-libav \
-                 x11-xserver-utils xinput
+                 x11-xserver-utils xinput fonts-thai-tlwg
 ```
+
+`fonts-thai-tlwg` provides the Thai glyphs for the TH screen language (check with `fc-list :lang=th`).
 
 > The GStreamer packages are required for `QMediaPlayer` to decode and play MP3 files on Linux.  
 > `x11-xserver-utils` (xrandr) and `xinput` are used to rotate the touchscreen to landscape at startup.
@@ -241,6 +243,14 @@ in **standby** (probes lifted, so the meter reports over-range or `OL`):
 A live reading always overwrites the display on the next poll, so switching modes never
 loses a real measurement. The choice is saved in `gui_mode5_config.json` (`hold_previous`)
 and restored on startup.
+
+## Screen Language (TH / EN)
+
+The two small **TH | EN** buttons under the clock switch every on-screen text, popup,
+spec-editor label and new DATA LOG line between Thai (default) and English, live. The
+choice is saved in `gui_mode5_config.json` (`language`: `"th"` or `"en"`). Strings live in
+`i18n.py`. Model names, point names, PASS / FAIL / OK / NG, the on-screen keyboard and
+internal logs (journalctl) stay in English.
 
 ## Uploads & Offline Resilience
 

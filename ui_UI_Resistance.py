@@ -20,6 +20,7 @@ from PySide6.QtCore import QCoreApplication, QMetaObject, QRectF, QPointF, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QSizePolicy, QTextBrowser, QVBoxLayout, QWidget)
+from i18n import tr, get_language
 
 # Palette shared with the mockup, the dialogs and the gauge painter.
 C = {
@@ -32,15 +33,19 @@ C = {
     "warn": "#f5b13d", "na": "#74858f",
 }
 MONO = "DejaVu Sans Mono"
-SANS = "Piboto, Roboto, DejaVu Sans, sans-serif"
+# Thai fallbacks: Piboto/Roboto/DejaVu have no Thai glyphs (fonts-thai-tlwg / fonts-noto).
+SANS = "Piboto, Roboto, DejaVu Sans, Noto Sans Thai, Loma, Tlwg Typo, sans-serif"
 
 
-def build_qss(scale=1.0):
+def build_qss(scale=1.0, lang=None):
     """Application-wide stylesheet. Dynamic properties ("state", "active",
-    "result") select the per-state colours; call repolish() after changing one."""
+    "result") select the per-state colours; call repolish() after changing one.
+    `lang` (default: current i18n language) drops caption letter-spacing for
+    Thai, where it would pull vowel/tone marks away from their consonant."""
     def px(v):
         return max(1, round(v * scale))
     c = C
+    cap_spacing = "0px" if (lang or get_language()) == "th" else "1px"
     return f"""
 * {{ font-family: {SANS}; }}
 QDialog, QMessageBox {{ background: {c['bg']}; color: {c['ink']}; font-size: {px(17)}px; }}
@@ -52,7 +57,7 @@ QFrame[panel="true"] {{
     background: {c['panel']}; border: 1px solid {c['edge']}; border-radius: {px(12)}px;
 }}
 QLabel[role="caption"] {{
-    color: {c['faint']}; font-family: {MONO}; font-size: {px(12)}px; letter-spacing: 1px;
+    color: {c['faint']}; font-family: {MONO}; font-size: {px(12)}px; letter-spacing: {cap_spacing};
 }}
 QLabel[role="tag"] {{ color: {c['accent']}; font-family: {MONO}; font-size: {px(12)}px; }}
 
@@ -62,7 +67,13 @@ QLabel[role="chip"][state="ok"]   {{ color: {c['pass']}; }}
 QLabel[role="chip"][state="warn"] {{ color: {c['warn']}; }}
 QLabel[role="chip"][state="bad"]  {{ color: {c['fail']}; }}
 QLabel[role="chip"][state="off"]  {{ color: {c['na']}; }}
-QLabel#label_clock {{ font-family: {MONO}; font-size: {px(26)}px; font-weight: bold; color: {c['ink']}; }}
+QLabel#label_clock {{ font-family: {MONO}; font-size: {px(22)}px; font-weight: bold; color: {c['ink']}; }}
+QPushButton[role="lang"] {{
+    background: {c['panel2']}; color: {c['faint']}; border: 1px solid {c['edge']};
+    border-radius: {px(6)}px; font-family: {MONO}; font-size: {px(13)}px; font-weight: bold;
+    min-height: {px(28)}px; padding: 0;
+}}
+QPushButton[role="lang"]:checked {{ background: #17394a; border-color: {c['accent']}; color: {c['accent_hi']}; }}
 
 /* ── model card ─────────────────────────────────────────────────────── */
 QPushButton#pushButton_model {{
@@ -324,7 +335,7 @@ class PointCard(QPushButton):
         top = QHBoxLayout()
         self.name_label = QLabel(name)
         self.name_label.setProperty("role", "card_name")
-        self.mark_label = QLabel(f"seq {seq}")
+        self.mark_label = QLabel(tr("card_seq", n=seq))
         self.mark_label.setProperty("role", "card_mark")
         self.mark_label.setProperty("result", "")
         self.mark_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -345,7 +356,7 @@ class PointCard(QPushButton):
     def set_result(self, result, value_text=""):
         """result: True / False / None (not yet measured this cycle)."""
         if result is None:
-            self.mark_label.setText(f"seq {self._seq}")
+            self.mark_label.setText(tr("card_seq", n=self._seq))
             set_prop(self.mark_label, "result", "")
         else:
             self.mark_label.setText(("✓ " if result else "✗ ") + value_text)
@@ -364,13 +375,14 @@ class Ui_Dialog(object):
         lay = QVBoxLayout(frame)
         lay.setContentsMargins(self.px(14), self.px(8), self.px(14), self.px(8))
         lay.setSpacing(self.px(2))
-        lay.addWidget(_caption(caption))
+        cap = _caption(caption)
+        lay.addWidget(cap)
         value = QLabel("---", frame)
         value.setObjectName(obj_name)
         value.setProperty("role", "chip")
         value.setProperty("state", "off")
         lay.addWidget(value)
-        return frame, value
+        return frame, value, cap
 
     def _limit_tile(self, parent, caption):
         btn = QPushButton(parent)
@@ -394,6 +406,7 @@ class Ui_Dialog(object):
         lay.addWidget(value, 1)
         for w in (cap, tag, value):
             w.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        btn.caption = cap   # kept for retranslate()
         return btn, tag, value
 
     def setupUi(self, Dialog):
@@ -409,9 +422,9 @@ class Ui_Dialog(object):
         # ── Top bar: status chips · model · clock ────────────────────────────
         top = QHBoxLayout()
         top.setSpacing(gap)
-        self.frame_usb, self.label_usb_status = self._chip(Dialog, "USB · METER", "label_usb_status")
-        self.frame_wifi, self.label_wifi = self._chip(Dialog, "WI-FI · UPLINK", "label_wifi")
-        self.frame_db, self.label_db = self._chip(Dialog, "DATABASE", "label_db")
+        self.frame_usb, self.label_usb_status, self.cap_usb = self._chip(Dialog, "", "label_usb_status")
+        self.frame_wifi, self.label_wifi, self.cap_wifi = self._chip(Dialog, "", "label_wifi")
+        self.frame_db, self.label_db, self.cap_db = self._chip(Dialog, "", "label_db")
         for f, w in ((self.frame_usb, 190), (self.frame_wifi, 180), (self.frame_db, 200)):
             f.setFixedWidth(px(w))
             top.addWidget(f)
@@ -423,8 +436,9 @@ class Ui_Dialog(object):
         model_lay.setContentsMargins(px(18), px(4), px(18), px(4))
         model_lay.setSpacing(px(14))
         model_cap = QVBoxLayout()
-        model_cap.addWidget(_caption("MODEL"))
-        self.label_model_hint = _caption("tap or scan ▸")
+        self.cap_model = _caption("")
+        model_cap.addWidget(self.cap_model)
+        self.label_model_hint = _caption("")
         model_cap.addWidget(self.label_model_hint)
         model_lay.addLayout(model_cap)
         self.label_model_name = FitLabel("Model", max_px=px(40), min_px=px(14))
@@ -437,12 +451,25 @@ class Ui_Dialog(object):
 
         self.frame_clock = _panel(Dialog)
         clock_lay = QVBoxLayout(self.frame_clock)
-        clock_lay.setContentsMargins(px(14), px(4), px(14), px(4))
+        clock_lay.setContentsMargins(px(8), px(4), px(8), px(6))
+        clock_lay.setSpacing(px(2))
         self.label_clock = QLabel("--:--")
         self.label_clock.setObjectName(u"label_clock")
         self.label_clock.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        clock_lay.addWidget(self.label_clock)
-        self.frame_clock.setFixedWidth(px(120))
+        clock_lay.addWidget(self.label_clock, 1)
+        # Language switch: two small toggles under the clock (TH default).
+        lang_row = QHBoxLayout()
+        lang_row.setSpacing(px(4))
+        self.btn_lang_th = QPushButton("TH")
+        self.btn_lang_en = QPushButton("EN")
+        for b in (self.btn_lang_th, self.btn_lang_en):
+            b.setProperty("role", "lang")
+            b.setCheckable(True)
+            b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            b.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            lang_row.addWidget(b)
+        clock_lay.addLayout(lang_row)
+        self.frame_clock.setFixedWidth(px(140))
         top.addWidget(self.frame_clock)
 
         top_w = QWidget(Dialog)
@@ -470,7 +497,7 @@ class Ui_Dialog(object):
         m.setContentsMargins(px(20), px(12), px(20), px(10))
         m.setSpacing(px(2))
         head = QHBoxLayout()
-        self.label_probe_caption = _caption("PROBE")
+        self.label_probe_caption = _caption("")
         head.addWidget(self.label_probe_caption, 0, Qt.AlignmentFlag.AlignVCenter)
         head.addSpacing(px(8))
         self.label_probe_point = QLabel("—")
@@ -498,7 +525,7 @@ class Ui_Dialog(object):
 
         self.gauge = ToleranceGauge(self.scale, self.frame_measure)
         m.addWidget(self.gauge)
-        self.label_measure_status = QLabel("waiting for meter…")
+        self.label_measure_status = QLabel("")
         self.label_measure_status.setObjectName(u"label_measure_status")
         self.label_measure_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         m.addWidget(self.label_measure_status)
@@ -506,8 +533,8 @@ class Ui_Dialog(object):
 
         limits = QVBoxLayout()
         limits.setSpacing(gap)
-        self.btn_upper, self.label_upper_tag, self.label_upper_value = self._limit_tile(Dialog, "UPPER LIMIT")
-        self.btn_lower, self.label_lower_tag, self.label_lower_value = self._limit_tile(Dialog, "LOWER LIMIT")
+        self.btn_upper, self.label_upper_tag, self.label_upper_value = self._limit_tile(Dialog, "")
+        self.btn_lower, self.label_lower_tag, self.label_lower_value = self._limit_tile(Dialog, "")
         limits.addWidget(self.btn_upper)
         limits.addWidget(self.btn_lower)
         limits_w = QWidget(Dialog)
@@ -528,9 +555,7 @@ class Ui_Dialog(object):
         self.point_cards_row.setContentsMargins(0, 0, 0, 0)
         self.point_cards_row.setSpacing(gap)
         self.point_cards_area.setWidget(host)
-        self.label_single_hint = QLabel(
-            "Single-range mode — no point sequence for this model.  "
-            "Tap a limit to edit it, or ✎ Edit spec to add points.")
+        self.label_single_hint = QLabel("")
         self.label_single_hint.setObjectName(u"label_single_hint")
         self.label_single_hint.setWordWrap(True)
         self.label_single_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -548,7 +573,7 @@ class Ui_Dialog(object):
         self.label_verdict.setObjectName(u"label_verdict")
         self.label_verdict.setAlignment(Qt.AlignmentFlag.AlignCenter)
         v.addWidget(self.label_verdict, 1)
-        self.label_verdict_detail = QLabel("no reading yet")
+        self.label_verdict_detail = QLabel("")
         self.label_verdict_detail.setObjectName(u"label_verdict_detail")
         self.label_verdict_detail.setAlignment(Qt.AlignmentFlag.AlignCenter)
         v.addWidget(self.label_verdict_detail)
@@ -557,11 +582,11 @@ class Ui_Dialog(object):
         # Tool buttons
         self.tools_row = QHBoxLayout()
         self.tools_row.setSpacing(gap)
-        self.btn_reset_point = QPushButton("⟲  First point")
-        self.btn_new_model = QPushButton("＋  New model")
-        self.btn_edit_spec = QPushButton("✎  Edit spec")
-        self.btn_upload_now = QPushButton("⬆  Upload now")
-        self.btn_hold_toggle = QPushButton("Hold reading")
+        self.btn_reset_point = QPushButton("")
+        self.btn_new_model = QPushButton("")
+        self.btn_edit_spec = QPushButton("")
+        self.btn_upload_now = QPushButton("")
+        self.btn_hold_toggle = QPushButton("")
         self.btn_hold_toggle.setObjectName(u"btn_hold_toggle")
         self.btn_hold_toggle.setCheckable(True)
         for b in (self.btn_reset_point, self.btn_new_model, self.btn_edit_spec,
@@ -585,22 +610,26 @@ class Ui_Dialog(object):
                                 ("YIELD", self.label_count_yield, "off")):
             col = QVBoxLayout()
             col.setSpacing(0)
-            col.addWidget(_caption(cap))
+            cap_lbl = _caption(cap)
+            if cap == "YIELD":
+                self.cap_yield = cap_lbl
+            col.addWidget(cap_lbl)
             lbl.setProperty("role", "count")
             lbl.setProperty("state", state)
             col.addWidget(lbl)
             counts.addLayout(col, 1)
         lg.addLayout(counts)
-        self.label_counts_scope = _caption("TODAY · THIS MODEL")
+        self.label_counts_scope = _caption("")
         lg.addWidget(self.label_counts_scope)
         sep = QFrame()
         sep.setFixedHeight(1)
         sep.setStyleSheet(f"background:{C['edge']};")
         lg.addWidget(sep)
         log_head = QHBoxLayout()
-        log_head.addWidget(_caption("DATA LOG"))
+        self.cap_data_log = _caption("")
+        log_head.addWidget(self.cap_data_log)
         log_head.addStretch(1)
-        self.label_log_count = _caption("0 READINGS")
+        self.label_log_count = _caption("")
         log_head.addWidget(self.label_log_count)
         lg.addLayout(log_head)
         self.textBrowser_log = QTextBrowser(self.frame_log)
@@ -617,4 +646,31 @@ class Ui_Dialog(object):
 
     def retranslateUi(self, Dialog):
         Dialog.setWindowTitle(QCoreApplication.translate("Dialog", u"HIOKI Data Logger", None))
+        self.retranslate()
     # retranslateUi
+
+    def retranslate(self, reading_count=0):
+        """Set every static text for the current i18n language. Dynamic texts
+        (chips, status line, hold/upload buttons) are refreshed by MainWindow."""
+        self.cap_usb.setText(tr("chip_usb"))
+        self.cap_wifi.setText(tr("chip_wifi"))
+        self.cap_db.setText(tr("chip_db"))
+        self.cap_model.setText(tr("cap_model"))
+        self.label_model_hint.setText(tr("model_hint"))
+        self.btn_upper.caption.setText(tr("cap_upper_limit"))
+        self.btn_lower.caption.setText(tr("cap_lower_limit"))
+        self.label_single_hint.setText(tr("single_hint"))
+        self.btn_reset_point.setText(tr("btn_first_point"))
+        self.btn_new_model.setText(tr("btn_new_model"))
+        self.btn_edit_spec.setText(tr("btn_edit_spec"))
+        self.cap_yield.setText(tr("cap_yield"))
+        self.label_counts_scope.setText(tr("counts_scope"))
+        self.cap_data_log.setText(tr("cap_data_log"))
+        self.label_log_count.setText(tr("log_count", n=reading_count))
+        if not self.label_measure_status.text():
+            self.label_measure_status.setText(tr("status_waiting_meter"))
+        if not self.label_verdict_detail.text():
+            self.label_verdict_detail.setText(tr("verdict_no_reading"))
+        lang = get_language()
+        self.btn_lang_th.setChecked(lang == "th")
+        self.btn_lang_en.setChecked(lang == "en")

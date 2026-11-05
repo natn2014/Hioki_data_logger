@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 from ui_UI_Resistance import C
+from i18n import tr
 
 
 def _screen_scale():
@@ -109,8 +110,8 @@ class NumpadDialog(QDialog):
 
         act = QHBoxLayout()
         act.setSpacing(self._px(8))
-        cancel_btn = QPushButton("Cancel")
-        ok_btn = QPushButton("OK")
+        cancel_btn = QPushButton(tr("cancel"))
+        ok_btn = QPushButton(tr("ok"))
         act_font = self._sf(20, bold=True)
         for b in (cancel_btn, ok_btn):
             b.setFont(act_font)

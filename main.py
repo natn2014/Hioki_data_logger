@@ -33,6 +33,7 @@ from ui_UI_Resistance import Ui_Dialog, PointCard, build_qss, set_prop, C as UI_
 from numpad_dialog import NumpadDialog
 from keyboard_dialog import KeyboardDialog
 from db_upload_manager import DBUploadManager, UploadSignals, SpecQueueManager
+from i18n import tr, set_language, get_language, DEFAULT_LANGUAGE
 
 BAUD_RATE = 9600
 POLL_INTERVAL_MS = 500  # default polling interval for FETC?
@@ -61,12 +62,40 @@ STALL_CHECK_MS = 2000
 HEARTBEAT_FILE = "heartbeat.txt"
 HEARTBEAT_MIN_INTERVAL_S = 5.0  # throttle disk writes to spare the SD card
 
-# USB status chip: state -> (text, style state).
+# USB status chip: state -> (i18n key, style state).
 USB_STATES = {
-    "connected":    ("● Connected",    "ok"),
-    "connecting":   ("◌ Connecting",   "warn"),
-    "disconnected": ("○ Disconnected", "bad"),
+    "connected":    ("usb_connected",    "ok"),
+    "connecting":   ("usb_connecting",   "warn"),
+    "disconnected": ("usb_disconnected", "bad"),
 }
+
+
+def show_message(parent, icon, title, text):
+    """QMessageBox with a translated OK button (Qt's own is always English)."""
+    box = QMessageBox(icon, title, text, QMessageBox.StandardButton.NoButton, parent)
+    box.addButton(tr("ok"), QMessageBox.ButtonRole.AcceptRole)
+    box.exec()
+
+
+def ask_yes_no(parent, title, text):
+    """Yes/No question with translated buttons. Returns True for Yes."""
+    box = QMessageBox(QMessageBox.Icon.Question, title, text,
+                      QMessageBox.StandardButton.NoButton, parent)
+    yes = box.addButton(tr("yes"), QMessageBox.ButtonRole.YesRole)
+    box.addButton(tr("no"), QMessageBox.ButtonRole.NoRole)
+    box.exec()
+    return box.clickedButton() is yes
+
+
+def read_config_language():
+    """Language saved in the config file (Thai when missing/unreadable)."""
+    try:
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, 'r') as f:
+                return json.load(f).get("language", DEFAULT_LANGUAGE)
+    except Exception:
+        pass
+    return DEFAULT_LANGUAGE
 
 
 def ui_scale():
@@ -270,7 +299,7 @@ class ModelSpecDialog(QDialog):
 
     def __init__(self, model="", points=None, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Register / Edit Model Spec")
+        self.setWindowTitle(tr("spec_title"))
         self.setObjectName("SpecDialog")   # scopes the input/button styles
         self.setModal(True)
         self._rows = []          # [{widget, seq, name, lower, upper}, ...]
@@ -284,17 +313,17 @@ class ModelSpecDialog(QDialog):
         outer.setContentsMargins(px(20), px(16), px(20), px(16))
         outer.setSpacing(px(12))
 
-        outer.addWidget(self._caption("MODEL NAME  ·  tap to type, or scan the part barcode"))
+        outer.addWidget(self._caption(tr("spec_model_caption")))
         self.model_edit = QLineEdit(model)
-        self.model_edit.setPlaceholderText("e.g. 750X — or scan the part barcode")
+        self.model_edit.setPlaceholderText(tr("spec_model_placeholder"))
         self.model_edit.setMaxLength(100)
         self._register_scan_field(self.model_edit)
         outer.addWidget(self.model_edit)
 
         hdr = QHBoxLayout()
-        hdr.addWidget(self._caption("MEASUREMENT POINTS  ·  probed in this order  ·  tap a value to edit"))
+        hdr.addWidget(self._caption(tr("spec_points_caption")))
         hdr.addStretch(1)
-        self.add_btn = QPushButton("＋  Add point")
+        self.add_btn = QPushButton(tr("spec_add_point"))
         self.add_btn.setProperty("role", "dlg")
         self.add_btn.clicked.connect(lambda: (self._add_row(), None)[1])
         hdr.addWidget(self.add_btn)
@@ -320,11 +349,11 @@ class ModelSpecDialog(QDialog):
         outer.addWidget(self.err_label)
 
         btns = QHBoxLayout()
-        cancel = QPushButton("Cancel")
+        cancel = QPushButton(tr("cancel"))
         cancel.setProperty("role", "dlg")
         cancel.setAutoDefault(False)
         cancel.clicked.connect(self.reject)
-        save = QPushButton("✓  Save to DB")
+        save = QPushButton(tr("spec_save"))
         save.setProperty("role", "primary")
         for b in (cancel, save):
             b.setMinimumSize(px(200), px(64))
@@ -391,9 +420,9 @@ class ModelSpecDialog(QDialog):
 
         h.addWidget(seq_lbl)
         h.addWidget(name_edit, 1)
-        h.addWidget(self._caption("LOWER"))
+        h.addWidget(self._caption(tr("spec_lower")))
         h.addWidget(lower_spin)
-        h.addWidget(self._caption("UPPER"))
+        h.addWidget(self._caption(tr("spec_upper")))
         h.addWidget(upper_spin)
         h.addWidget(rm_btn)
 
@@ -436,10 +465,10 @@ class ModelSpecDialog(QDialog):
         if et == QEvent.Type.MouseButtonPress:
             for rec in self._rows:
                 if source is rec["lower"].lineEdit():
-                    self._numpad(rec["lower"], "Lower Ω")
+                    self._numpad(rec["lower"], tr("title_lower_short"))
                     return True
                 if source is rec["upper"].lineEdit():
-                    self._numpad(rec["upper"], "Upper Ω")
+                    self._numpad(rec["upper"], tr("title_upper_short"))
                     return True
             if source in self._scan_fields:
                 self._keyboard(source)
@@ -451,7 +480,7 @@ class ModelSpecDialog(QDialog):
 
     def _keyboard(self, line_edit):
         """Tap a text field → on-screen keyboard (scanner input works too)."""
-        title = "Model name" if line_edit is self.model_edit else "Point name"
+        title = tr("title_model_name") if line_edit is self.model_edit else tr("title_point_name")
         dlg = KeyboardDialog(
             current_text=line_edit.text(), title=title,
             max_length=line_edit.maxLength(), parent=self,
@@ -472,22 +501,22 @@ class ModelSpecDialog(QDialog):
         """Return (model, points, error). error is None when valid."""
         model = self.model_edit.text().strip()
         if not model:
-            return None, None, "model name is required"
+            return None, None, tr("err_model_required")
         if not self._rows:
-            return None, None, "add at least one measurement point"
+            return None, None, tr("err_add_point")
         points = []
         seen = set()
         for i, rec in enumerate(self._rows, start=1):
             name = rec["name"].text().strip()
             if not name:
-                return None, None, f"point {i}: name is required"
+                return None, None, tr("err_point_name", i=i)
             if name.lower() in seen:
-                return None, None, f"point {i}: duplicate name '{name}'"
+                return None, None, tr("err_point_dup", i=i, name=name)
             seen.add(name.lower())
             lo = rec["lower"].value()
             up = rec["upper"].value()
             if lo >= up:
-                return None, None, f"point {i} ({name}): lower must be < upper"
+                return None, None, tr("err_lower_upper", i=i, name=name)
             points.append({"name": name, "lower": round(lo, SPEC_DECIMALS),
                            "upper": round(up, SPEC_DECIMALS)})
         return model, points, None
@@ -707,6 +736,8 @@ class MainWindow(QDialog):
 
     def init_ui(self):
         scale = ui_scale()
+        # Language first so the very first paint is already in it.
+        set_language(read_config_language())
         # App-wide so the dialogs and QMessageBoxes get the same touch sizing.
         QApplication.instance().setStyleSheet(build_qss(scale))
         self.ui = Ui_Dialog(scale)
@@ -721,6 +752,8 @@ class MainWindow(QDialog):
         enable_touch_scroll(self.ui.textBrowser_log)
         enable_touch_scroll(self.ui.point_cards_area)
         self.ui.pushButton_model.clicked.connect(self.on_model_clicked)
+        self.ui.btn_lang_th.clicked.connect(lambda: self._on_lang_clicked("th"))
+        self.ui.btn_lang_en.clicked.connect(lambda: self._on_lang_clicked("en"))
 
         # Point-sequence cards: one tappable card per point. Tapping a card jumps
         # straight to that point. cycle_results holds this part's per-point
@@ -759,12 +792,12 @@ class MainWindow(QDialog):
         pending_count = self.db_manager.get_pending_count()
         if pending_count > 0:
             self.log_event(f"Found {pending_count} pending uploads to retry")
-            self.append_log(f"! {pending_count} value(s) waiting to upload")
+            self.append_log(tr("log_pending_values", n=pending_count))
 
         pending_specs = self.spec_queue.pending_count()
         if pending_specs > 0:
             self.log_event(f"Found {pending_specs} pending spec(s) to upload")
-            self.append_log(f"! {pending_specs} model spec(s) waiting to upload")
+            self.append_log(tr("log_pending_specs", n=pending_specs))
 
         # Initialise status badges and start background WiFi monitor
         self._db_online = None   # unknown until the first DB round-trip
@@ -781,13 +814,45 @@ class MainWindow(QDialog):
             self._load_counts()   # midnight: start the new day's counters
 
     def _set_usb_status(self, state):
-        text, style = USB_STATES.get(state, USB_STATES["disconnected"])
-        self.ui.label_usb_status.setText(text)
+        self._usb_state = state
+        key, style = USB_STATES.get(state, USB_STATES["disconnected"])
+        self.ui.label_usb_status.setText(tr(key))
         set_prop(self.ui.label_usb_status, "state", style)
         if state != "connected":
-            self._show_reading("idle", status={
-                "connecting": "connecting to meter…",
-            }.get(state, "meter disconnected — check the USB cable"))
+            self._show_reading("idle", status=tr(
+                "status_connecting" if state == "connecting" else "status_disconnected"))
+
+    # ── Language (TH default / EN) ────────────────────────────────────────────
+
+    def _on_lang_clicked(self, code):
+        if code != get_language():
+            self.apply_language(code)
+            self.log_event(f"UI language -> {code}")
+            self.save_config()
+        else:
+            self.ui.retranslate(self.reading_count)   # keep the toggle checked
+
+    def apply_language(self, code):
+        """Switch every visible text to `code` without restarting. DATA LOG
+        lines already shown stay as written; new lines use the new language."""
+        set_language(code)
+        QApplication.instance().setStyleSheet(build_qss(ui_scale()))
+        self.ui.retranslate(self.reading_count)
+        self._set_usb_status(getattr(self, "_usb_state", "disconnected"))
+        self._refresh_db_status()
+        self._apply_hold_toggle_ui()
+        self._apply_point_to_ui()
+        if not self.cleaned_model:
+            self.ui.label_model_name.setText(tr("model_placeholder"))
+        if self.ui.frame_verdict.property("state") == "idle":
+            self.ui.label_verdict_detail.setText(tr("verdict_no_reading_model"))
+        if self.connected:
+            state = self.ui.label_measure_value.property("state")
+            if state == "idle":
+                self._show_reading("idle", status=tr("status_ready")
+                                   + (self._probe_hint() or tr("status_probe_part")))
+            elif state == "standby":
+                self._show_waiting()
 
     def _on_wifi_ready(self, pct):
         if pct < 0:
@@ -807,16 +872,16 @@ class MainWindow(QDialog):
         specs = self.spec_queue.pending_count()
         queued = pending + specs
         if self._db_online is False:
-            text, style = (f"○ Offline · {queued}" if queued else "○ Offline"), "bad"
+            text, style = (tr("db_offline_n", n=queued) if queued else tr("db_offline")), "bad"
         elif queued:
-            text, style = f"⬆ {queued} queued", "warn"
+            text, style = tr("db_queued", n=queued), "warn"
         elif self._db_online:
-            text, style = "● Online", "ok"
+            text, style = tr("db_online"), "ok"
         else:
             text, style = "◌ ---", "off"
         self.ui.label_db.setText(text)
         set_prop(self.ui.label_db, "state", style)
-        self.btn_upload_now.setText(f"⬆  Upload ({queued})" if queued else "⬆  Upload now")
+        self.btn_upload_now.setText(tr("btn_upload_n", n=queued) if queued else tr("btn_upload_now"))
         set_prop(self.btn_upload_now, "attention", bool(queued))
 
     def _set_db_online(self, online):
@@ -824,17 +889,17 @@ class MainWindow(QDialog):
         self._refresh_db_status()
 
     def _set_model_text(self, text):
-        self.ui.label_model_name.setText(text if text else "Tap to set model")
+        self.ui.label_model_name.setText(text if text else tr("model_placeholder"))
         set_prop(self.ui.label_model_name, "empty", not text)
         # A previous model's PASS/FAIL must not linger under the new name.
         self.ui.label_verdict.setText("— — —")
-        self.ui.label_verdict_detail.setText("no reading yet for this model")
+        self.ui.label_verdict_detail.setText(tr("verdict_no_reading_model"))
         set_prop(self.ui.frame_verdict, "state", "idle")
         self._load_counts()
 
     def _refresh_limits_ui(self, editable):
         """Show self.lower_limit/upper_limit on the tiles (and the gauge)."""
-        tag = "TAP TO EDIT" if editable else "LOCKED"
+        tag = tr("tag_tap_to_edit") if editable else tr("tag_locked")
         for btn, value_lbl, tag_lbl, v in (
                 (self.ui.btn_upper, self.ui.label_upper_value, self.ui.label_upper_tag, self.upper_limit),
                 (self.ui.btn_lower, self.ui.label_lower_value, self.ui.label_lower_tag, self.lower_limit)):
@@ -847,12 +912,12 @@ class MainWindow(QDialog):
         # While a point sequence drives the limits they are read-only; skip
         # the numpad so operators can't override the active point's range.
         if self.current_point() is not None:
-            self.append_log("Limits come from the point spec — use ✎ Edit spec to change them")
+            self.append_log(tr("log_limits_from_spec"))
             return
         current = self.upper_limit if which == "upper" else self.lower_limit
         dlg = NumpadDialog(
             current_value=current, decimals=SPEC_DECIMALS,
-            title="Upper Limit (Ω)" if which == "upper" else "Lower Limit (Ω)",
+            title=tr("title_upper_limit") if which == "upper" else tr("title_lower_limit"),
             min_val=0.01, max_val=9999.0, parent=self,
         )
         if dlg.exec() == QDialog.DialogCode.Accepted:
@@ -893,10 +958,10 @@ class MainWindow(QDialog):
     def _show_waiting(self):
         """Open circuit (probes lifted): show WAITING. Hold mode keeps the last
         reading on screen, dimmed; Release mode replaces it with WAITING."""
-        status = "waiting · open circuit" + self._probe_hint()
+        status = tr("status_waiting_open") + self._probe_hint()
         if self.hold_previous and self._display_value is not None:
             self._show_reading("standby", self._display_value,
-                               status + " · holding last reading", *self._display_range)
+                               status + tr("status_holding"), *self._display_range)
         elif time.time() - self._recorded_at < RELEASE_AFTER_S:
             return   # keep the just-recorded value readable a moment longer
         else:
@@ -904,7 +969,7 @@ class MainWindow(QDialog):
 
     def _probe_hint(self):
         p = self.current_point()
-        return f" · probe {p['name']}" if p else ""
+        return tr("probe_hint", name=p['name']) if p else ""
 
     def start_auto_detect(self):
         if self.connected or self.detect_in_progress:
@@ -985,6 +1050,7 @@ class MainWindow(QDialog):
             # Update current model and limits
             config["current_model"] = self.cleaned_model
             config["hold_previous"] = self.hold_previous
+            config["language"] = get_language()
             if "models" not in config:
                 config["models"] = {}
             if self.cleaned_model:
@@ -1031,7 +1097,7 @@ class MainWindow(QDialog):
     def on_limit_changed(self):
         """Persist and show limits after a single-range edit on the numpad."""
         if self.lower_limit >= self.upper_limit:
-            self.append_log("! Lower limit is not below the upper limit — every reading will FAIL")
+            self.append_log(tr("log_lower_not_below"))
         self._refresh_limits_ui(editable=True)
         self.save_config()
 
@@ -1099,7 +1165,7 @@ class MainWindow(QDialog):
 
     def _prompt_model_text(self, preset=""):
         """On-screen keyboard prompt for a model name. Returns (text, ok)."""
-        dlg = KeyboardDialog(current_text=preset, title="Model name",
+        dlg = KeyboardDialog(current_text=preset, title=tr("title_model_name"),
                              max_length=100, parent=self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             return dlg.get_text(), True
@@ -1112,8 +1178,7 @@ class MainWindow(QDialog):
             old_model = self.cleaned_model
             cleaned = self._decode_model_text(text)
             if not cleaned and text.strip():
-                self.append_log(f"Model not changed — a URL or text over "
-                                f"{MODEL_MAX_LEN} characters is not a valid model")
+                self.append_log(tr("log_model_not_changed", n=MODEL_MAX_LEN))
                 return
             self.cleaned_model = cleaned
             self._set_model_text(cleaned)
@@ -1232,8 +1297,8 @@ class MainWindow(QDialog):
         self.btn_hold_toggle.setChecked(self.hold_previous)
         self.btn_hold_toggle.blockSignals(False)
         # Label states the *current* mode; checked (highlighted) = hold.
-        self.btn_hold_toggle.setText("◼  Hold reading" if self.hold_previous
-                                     else "↧  Release")
+        self.btn_hold_toggle.setText(tr("btn_hold") if self.hold_previous
+                                     else tr("btn_release"))
 
     def on_hold_toggle(self, checked):
         """Toggle whether the measure display holds the last reading or releases
@@ -1242,7 +1307,8 @@ class MainWindow(QDialog):
         self._apply_hold_toggle_ui()
         mode = "hold last reading" if checked else "release (show WAITING)"
         self.log_event(f"Measure display mode: {mode}")
-        self.append_log(f"Display mode → {mode}")
+        self.append_log(tr("log_display_mode",
+                           mode=tr("mode_hold") if checked else tr("mode_release")))
         # In release mode, replace a stale held value with WAITING immediately so
         # the change is visible without waiting for the next standby poll.
         if not checked:
@@ -1257,8 +1323,9 @@ class MainWindow(QDialog):
         self._apply_point_to_ui()
         p = self.spec_points[index]
         self.log_event(f"Point selected by tap: {p['name']} (seq {p['seq']})")
-        self.append_log(f"Point → {p['name']} "
-                        f"({p['lower']:.{SPEC_DECIMALS}f}–{p['upper']:.{SPEC_DECIMALS}f} Ω)")
+        self.append_log(tr("log_point_selected", name=p['name'],
+                           lo=f"{p['lower']:.{SPEC_DECIMALS}f}",
+                           hi=f"{p['upper']:.{SPEC_DECIMALS}f}"))
 
     def _cards_signature(self):
         """Identity of the current card set — rebuild only when this changes."""
@@ -1333,12 +1400,12 @@ class MainWindow(QDialog):
             self.lower_limit = point["lower"]
             self.upper_limit = point["upper"]
             idx, n = self.current_point_index + 1, len(self.spec_points)
-            self.ui.label_probe_caption.setText("PROBE")
+            self.ui.label_probe_caption.setText(tr("cap_probe"))
             self.ui.label_probe_point.setText(point["name"])
-            self.ui.label_point_index.setText(f"point {idx} / {n}")
+            self.ui.label_point_index.setText(tr("point_index", i=idx, n=n))
         else:
-            self.ui.label_probe_caption.setText("MEASURED")
-            self.ui.label_probe_point.setText("single range")
+            self.ui.label_probe_caption.setText(tr("cap_measured"))
+            self.ui.label_probe_point.setText(tr("single_range"))
             self.ui.label_point_index.setText("")
         self._refresh_limits_ui(editable=not seq_active)
 
@@ -1372,7 +1439,7 @@ class MainWindow(QDialog):
         """Write a spec to resistance_spec off-thread; queue it if the DB is down."""
         self._pending_spec = (model, points)
         self._set_spec_buttons_enabled(False)
-        self.append_log(f"Saving spec: {model} ({len(points)} points)...")
+        self.append_log(tr("log_saving_spec", model=model, n=len(points)))
         self.spec_upsert_thread = SpecUpsertThread(model, points)
         self.spec_upsert_thread.done.connect(
             self.on_spec_saved, Qt.ConnectionType.QueuedConnection)
@@ -1402,12 +1469,8 @@ class MainWindow(QDialog):
             self.current_point_index = 0
             self._apply_point_to_ui()
             return
-        resp = QMessageBox.question(
-            self, "Spec saved",
-            f"Spec for '{model}' is ready.\nSwitch to this model now?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if resp == QMessageBox.StandardButton.Yes:
+        if ask_yes_no(self, tr("msg_spec_saved_title"),
+                      tr("msg_spec_saved_body", model=model)):
             old = self.cleaned_model
             self.cleaned_model = model
             self._set_model_text(model)
@@ -1426,7 +1489,7 @@ class MainWindow(QDialog):
 
         self.log_event(f"Spec saved to DB for '{model}' ({count} points)")
         self._set_db_online(True)
-        self.append_log(f"✓ Spec saved: {model} ({count} points)")
+        self.append_log(tr("log_spec_saved", model=model, n=count))
         self._adopt_spec(model, norm)
 
         # Server just proved reachable — push any specs queued while it was down.
@@ -1442,37 +1505,30 @@ class MainWindow(QDialog):
         if not queueable:
             # Validation error — retrying can never help.
             self.log_event(f"Spec rejected for '{model}': {err}")
-            self.append_log(f"! Spec rejected: {err}")
-            QMessageBox.critical(
-                self, "Spec rejected",
-                f"The spec for '{model}' is not valid:\n{err}",
-            )
+            self.append_log(tr("log_spec_rejected", err=err))
+            show_message(self, QMessageBox.Icon.Critical, tr("msg_spec_rejected_title"),
+                         tr("msg_spec_rejected_body", model=model, err=err))
             return
 
         raw = pending[1] if (pending and pending[0] == model) else []
         count = self.spec_queue.queue_spec(model, raw)
         self._set_db_online(False)
         self.log_event(f"Spec queued offline for '{model}': {err}")
-        self.append_log(f"! DB unreachable — spec for {model} queued "
-                        f"({count} pending, will upload automatically)")
+        self.append_log(tr("log_spec_queued", model=model, n=count))
         # The spec is valid, so use it locally right away.
         self._adopt_spec(model, self._normalise_points(raw))
-        QMessageBox.information(
-            self, "Spec queued",
-            f"The database is unreachable, so the spec for '{model}' was saved "
-            f"locally to {SpecQueueManager.PENDING_FILE}.\n\n"
-            f"It is active on this device now and will upload automatically "
-            f"when the server is back.",
-        )
+        show_message(self, QMessageBox.Icon.Information, tr("msg_spec_queued_title"),
+                     tr("msg_spec_queued_body", model=model,
+                        file=SpecQueueManager.PENDING_FILE))
 
     def on_spec_flush_complete(self, flushed, remaining):
         """A queued spec batch reached the DB."""
         self.log_event(f"Spec queue flushed: {flushed} model(s), {remaining} remaining")
         self._refresh_db_status()
         if remaining:
-            self.append_log(f"Spec queue: {flushed} uploaded, {remaining} still pending")
+            self.append_log(tr("log_spec_queue_partial", done=flushed, left=remaining))
         else:
-            self.append_log(f"✓ Spec queue empty — {flushed} model(s) uploaded")
+            self.append_log(tr("log_spec_queue_done", done=flushed))
 
     # ── Startup schema guard (optional, non-fatal) ────────────────────────────
 
@@ -1506,7 +1562,7 @@ class MainWindow(QDialog):
                    ". Apply migrations/001_multipoint_spec.sql to ENGINEER_DB "
                    "(uploads will fail until then).")
             self.log_event("WARNING: " + msg)
-            self.append_log("! " + msg)
+            self.append_log(tr("log_schema_old", problems="; ".join(problems)))
         else:
             self.log_event("DB schema OK (resistance_spec + point columns present)")
 
@@ -1557,11 +1613,11 @@ class MainWindow(QDialog):
         if not decoded and is_ignored_scan(raw):
             # URL / TISI QR code — not a model label. Keep the current model.
             self.log_event(f"Barcode scan ignored (URL / not a model): '{raw}'")
-            self.append_log("Barcode ignored — that is a URL/QR link, not a model label")
+            self.append_log(tr("log_barcode_ignored"))
             return
         if not decoded:
             self.log_event(f"Barcode scan: decode failed for '{raw}'")
-            self.append_log(f"Barcode: unrecognised format — {raw}")
+            self.append_log(tr("log_barcode_unknown", raw=raw))
             return
         self.log_event(f"Barcode scan: '{raw}' → '{decoded}'")
         old_model = self.cleaned_model
@@ -1571,7 +1627,7 @@ class MainWindow(QDialog):
         self.load_model_spec()
         self.save_config()
         self.log_model_change("CHANGE", old_model, decoded, "barcode")
-        self.append_log(f"Model set via barcode: {decoded}")
+        self.append_log(tr("log_model_by_barcode", model=decoded))
 
     def compare_spec(self, value_str, lower=None, upper=None):
         """Compare reading with spec limits. Returns (pass, result_text).
@@ -1612,7 +1668,7 @@ class MainWindow(QDialog):
 
     def start_mode(self):
         if not self.current_port:
-            QMessageBox.warning(self, "No Port", "No HIOKI port available.")
+            show_message(self, QMessageBox.Icon.Warning, tr("msg_no_port_title"), tr("msg_no_port_body"))
             return
         if self.connected:
             return
@@ -1640,9 +1696,10 @@ class MainWindow(QDialog):
             self.consecutive_same = 0
             self.consecutive_timeouts = 0
 
-            self.append_log("Auto Hold enabled. Polling FETC?...")
+            self.append_log(tr("log_auto_hold"))
             self.log_event("Device configured and polling started")
-            self._show_reading("idle", status="ready" + (self._probe_hint() or " · probe the part"))
+            self._show_reading("idle", status=tr("status_ready")
+                               + (self._probe_hint() or tr("status_probe_part")))
             # Start background poll thread — all serial I/O moves off the main thread
             self.poll_thread = PollWorkerThread(
                 self.serial_obj, POLL_INTERVAL_MS, health_check_interval=30
@@ -1657,7 +1714,7 @@ class MainWindow(QDialog):
             self.retry_upload_timer.start(5000)   # Check every 5 s; DBUploadManager gates actual retries via backoff
         except Exception as e:
             self.log_event(f"Connection failed: {e}")
-            QMessageBox.critical(self, "Connection Error", str(e))
+            show_message(self, QMessageBox.Icon.Critical, tr("msg_conn_error_title"), str(e))
             self.connected = False
 
     def on_fetch_result(self, msg):
@@ -1672,7 +1729,7 @@ class MainWindow(QDialog):
             self.consecutive_same = 0
             self.consecutive_timeouts += 1
             self.log_event(f"FETC? timeout #{self.consecutive_timeouts}")
-            self.append_log(f"[{time_str}] Error: {msg}")
+            self.append_log(tr("log_error", time=time_str, msg=msg))
             if self.consecutive_timeouts >= self.max_consecutive_timeouts:
                 self.log_event(f"Max consecutive timeouts reached ({self.consecutive_timeouts}), triggering reconnect")
                 self.handle_comm_error("Multiple timeouts detected")
@@ -1682,7 +1739,7 @@ class MainWindow(QDialog):
             self.consecutive_same = 0
             self.consecutive_timeouts += 1
             self.log_event(f"FETC? error: {msg}")
-            self.append_log(f"[{time_str}] Error: {msg}")
+            self.append_log(tr("log_error", time=time_str, msg=msg))
             self.handle_comm_error(msg)
             return
 
@@ -1730,9 +1787,9 @@ class MainWindow(QDialog):
             value = float(msg)
             if self.consecutive_same == 1:
                 self._display_value, self._display_range = value, (None, None)
-                self._show_reading("settling", value, "settling…")
+                self._show_reading("settling", value, tr("status_settling"))
             elif record:
-                self._show_reading("stable", value, "stable · recording…")
+                self._show_reading("stable", value, tr("status_stable"))
             # consecutive_same >= 3: the meter is auto-holding the reading
             # just recorded — keep its PASS/FAIL colour on screen.
         except ValueError:
@@ -1786,9 +1843,9 @@ class MainWindow(QDialog):
                 self.append_csv_row(current_time, resistance_value, status_for_db,
                                     cleaned_model, point=p_name, seq=p_seq,
                                     lower=p_lower, upper=p_upper, db_status="pending")
-                csv_status = "(CSV: ✓)"
+                csv_status = tr("csv_ok")
             except Exception as e:
-                csv_status = f"(CSV Error: {e})"
+                csv_status = tr("csv_error", e=e)
                 print(f"CSV write error: {e}")
 
             if cleaned_model and can_insert:
@@ -1799,15 +1856,15 @@ class MainWindow(QDialog):
                                                  self.on_upload_complete, point=p_name, seq=p_seq,
                                                  lower=p_lower, upper=p_upper)
                     self.last_db_insert_time = current_time
-                    db_status = "(DB: Uploading...)"
+                    db_status = tr("db_uploading")
                 except Exception as e:
-                    db_status = f"(DB Error: {e})"
+                    db_status = tr("db_error", e=e)
                     print(f"Database upload error: {e}")
             elif not cleaned_model:
-                db_status = "(DB: No Model)"
+                db_status = tr("db_no_model")
                 print("DEBUG: No model set - click Model button to enter model name")
             else:
-                db_status = "(DB: Wait 10s)"
+                db_status = tr("db_wait")
                 print(f"DEBUG: Waiting for 10s interval - last insert was {(current_time - self.last_db_insert_time).total_seconds():.1f}s ago")
 
             value_text = f"{resistance_value:.3f}" if isinstance(resistance_value, float) else str(msg)
@@ -1839,8 +1896,9 @@ class MainWindow(QDialog):
             self._display_value = msg
             self._display_range = (judged_lo, judged_hi)
             self._recorded_at = time.time()
-            self._show_reading(state, msg, f"recorded {where}{verdict}"
-                               + (f"  →  next: {self.current_point()['name']}" if self.spec_points else ""),
+            self._show_reading(state, msg, tr("status_recorded", where=where, verdict=verdict)
+                               + (tr("status_next", name=self.current_point()['name'])
+                                  if self.spec_points else ""),
                                judged_lo, judged_hi)
         # Removed logging of unstable readings - only log stable data
 
@@ -1853,7 +1911,7 @@ class MainWindow(QDialog):
             pending = self.db_manager.get_pending_count()
             if pending > 0:
                 self.log_event(f"Server reachable — flushing {pending} queued record(s)")
-                self.append_log(f"Server back — uploading {pending} queued record(s)...")
+                self.append_log(tr("log_server_back", n=pending))
                 self.db_manager.retry_pending_uploads()
             # ...and any specs queued while the server was down.
             if self.spec_queue.pending_count() > 0:
@@ -1861,8 +1919,8 @@ class MainWindow(QDialog):
         else:
             self.log_event(f"Database upload failed: {error_msg}")
             count, wait, _ = self.db_manager.get_queue_status()
-            wait_str = f"{int(wait)}s" if wait > 1 else "soon"
-            self.append_log(f"! DB unreachable — {count} queued, retry in {wait_str}")
+            wait_str = tr("wait_seconds", n=int(wait)) if wait > 1 else tr("wait_soon")
+            self.append_log(tr("log_db_unreachable", n=count, wait=wait_str))
 
     def retry_pending_uploads(self):
         """Timer callback — let DBUploadManager decide whether the backoff window has elapsed."""
@@ -1881,8 +1939,7 @@ class MainWindow(QDialog):
         self._set_db_online(True)
         self.log_event(f"DB rejected {count} record(s), moved to "
                        f"{DBUploadManager.FAILED_FILE}: {error_msg}")
-        self.append_log(f"! {count} record(s) rejected by DB (bad data) — "
-                        f"saved to {DBUploadManager.FAILED_FILE}")
+        self.append_log(tr("log_rejected", n=count, file=DBUploadManager.FAILED_FILE))
 
     def on_retry_complete(self, success_count, failed_count, remaining_count):
         """Callback when a batch retry finishes (runs on main thread)."""
@@ -1891,17 +1948,17 @@ class MainWindow(QDialog):
             return  # every record was rejected and parked — on_upload_rejected reported it
         if remaining_count == 0 and success_count > 0:
             self.log_event(f"Batch upload complete: {success_count} record(s) sent")
-            self.append_log(f"Batch upload done — {success_count} record(s) sent")
+            self.append_log(tr("log_batch_done", n=success_count))
         elif success_count > 0:
             count, wait, _ = self.db_manager.get_queue_status()
-            wait_str = f"{int(wait)}s"
+            wait_str = tr("wait_seconds", n=int(wait))
             self.log_event(f"Partial batch: {success_count} uploaded, {remaining_count} still pending")
-            self.append_log(f"Partial upload: {success_count}✓ — {remaining_count} pending, retry in {wait_str}")
+            self.append_log(tr("log_partial", ok=success_count, left=remaining_count, wait=wait_str))
         else:
             count, wait, _ = self.db_manager.get_queue_status()
-            wait_str = f"{int(wait)}s"
+            wait_str = tr("wait_seconds", n=int(wait))
             self.log_event(f"Batch retry failed — {remaining_count} record(s) still pending")
-            self.append_log(f"! Retry failed — {remaining_count} queued, next in {wait_str}")
+            self.append_log(tr("log_retry_failed", n=remaining_count, wait=wait_str))
 
     def on_upload_now_clicked(self):
         """Force an immediate flush of pending_uploads.json — no timer/backoff wait."""
@@ -1909,13 +1966,13 @@ class MainWindow(QDialog):
         specs = self.spec_queue.pending_count()
         if pending == 0 and specs == 0:
             self.log_event("Upload Now: nothing pending")
-            self.append_log("Upload Now — queue already empty")
+            self.append_log(tr("log_queue_empty"))
             return
         if self.db_manager.is_uploading:
-            self.append_log("Upload Now — an upload is already in progress…")
+            self.append_log(tr("log_upload_busy"))
             return
         self.log_event(f"Upload Now: forcing flush of {pending} reading(s), {specs} spec(s)")
-        self.append_log(f"⬆ Uploading {pending} pending record(s) now…")
+        self.append_log(tr("log_uploading_now", n=pending))
         # force=True bypasses the backoff window; the batch runs off-thread and
         # reports back through on_retry_complete.
         self.db_manager.retry_pending_uploads(force=True)
@@ -1963,7 +2020,7 @@ class MainWindow(QDialog):
         Orphan the (frozen, unkillable) thread and rebuild on a fresh handle."""
         self.log_event(
             f"Serial hardware hang detected (no poll for {age:.1f}s) — reconnecting")
-        self.append_log("⚠ Serial hardware hang — reconnecting…")
+        self.append_log(tr("log_serial_hang"))
         self._set_usb_status("connecting")
 
         # Orphan the wedged worker: signal it to stop (it obeys if/when the kernel
@@ -2180,7 +2237,7 @@ class MainWindow(QDialog):
             verdict += " " + result_text.split(":", 1)[1].strip().lower()   # "NG high"
         point_html = f'<span style="color:{c["accent_hi"]}">[{escape(point)}]</span> ' if point else ""
         self.reading_count += 1
-        self.ui.label_log_count.setText(f"{self.reading_count} READINGS")
+        self.ui.label_log_count.setText(tr("log_count", n=self.reading_count))
         self._log_html(
             f'<span style="color:{c["faint"]}">{escape(time_str[:8])}</span> '
             f'{point_html}<b>{escape(str(value))} Ω</b> '
@@ -2194,7 +2251,8 @@ def main():
         w = MainWindow()
         w.showFullScreen()
     except Exception as e:
-        QMessageBox.critical(None, "Startup Error", f"Failed to initialize application:\n{e}")
+        show_message(None, QMessageBox.Icon.Critical, tr("msg_startup_title"),
+                     tr("msg_startup_body", e=e))
         sys.exit(1)
     sys.exit(app.exec())
 
