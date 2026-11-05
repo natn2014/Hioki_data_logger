@@ -9,17 +9,19 @@ from collections import OrderedDict
 from datetime import datetime
 from threading import Thread, Lock
 from PySide6.QtCore import Signal, QObject
-from insert_resistance2db import insert_to_mssql, upsert_model_spec
+from insert_resistance2db import insert_to_mssql, upsert_model_spec, is_data_error
 
 
 class UploadSignals(QObject):
     upload_complete = Signal(bool, str)      # (success, error_msg)
+    upload_rejected = Signal(int, str)       # (rejected_count, last_error) — bad record parked
     retry_complete  = Signal(int, int, int)  # (success_count, failed_count, remaining)
     spec_flush_complete = Signal(int, int)   # (models_flushed, models_remaining)
 
 
 class DBUploadManager:
     PENDING_FILE    = "pending_uploads.json"
+    FAILED_FILE     = "failed_uploads.json"   # records the server rejected (bad data)
     UPLOAD_TIMEOUT  = 5    # seconds per upload call
     MAX_BATCH_TIME  = 120  # wall-clock limit for one batch flush (seconds)
 
@@ -96,6 +98,30 @@ class DBUploadManager:
         except Exception as e:
             print(f"[DBUploadManager] Error saving pending uploads: {e}")
 
+    def _park_failed(self, records, error):
+        """Append records the server rejected to FAILED_FILE so they stop
+        blocking the queue but are never silently lost."""
+        if not records:
+            return
+        try:
+            failed = []
+            if os.path.exists(self.FAILED_FILE):
+                with open(self.FAILED_FILE, 'r', encoding='utf-8') as f:
+                    failed = json.load(f)
+        except Exception as e:
+            print(f"[DBUploadManager] Error reading {self.FAILED_FILE}: {e}")
+            failed = []
+        stamp = datetime.now().isoformat()
+        for r in records:
+            failed.append(dict(r, rejected_at=stamp, error=str(error)[:500]))
+        try:
+            with open(self.FAILED_FILE, 'w', encoding='utf-8') as f:
+                json.dump(failed, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"[DBUploadManager] Error saving {self.FAILED_FILE}: {e}")
+        print(f"[DBUploadManager] Parked {len(records)} rejected record(s) in "
+              f"{self.FAILED_FILE}: {error}")
+
     # ── Queue management ──────────────────────────────────────────────────────
 
     def add_pending_upload(self, model, value, status,
@@ -153,6 +179,17 @@ class DBUploadManager:
                 if self.parent_signals:
                     self.parent_signals.upload_complete.emit(True, "")
             except Exception as e:
+                if is_data_error(e):
+                    # Server is up but rejected this row — park it, don't go offline.
+                    self._mark_server_up()
+                    self._park_failed([{
+                        "model": model, "value": value, "status": status,
+                        "point": point, "seq": seq, "lower": lower, "upper": upper,
+                        "timestamp": datetime.now().isoformat(), "retry_count": 0,
+                    }], e)
+                    if self.parent_signals:
+                        self.parent_signals.upload_rejected.emit(1, str(e))
+                    return
                 count = self.add_pending_upload(model, value, status,
                                                 point, seq, lower, upper)
                 self._mark_server_down()
@@ -183,6 +220,8 @@ class DBUploadManager:
             self.is_uploading = True
             success_count = 0
             fail_count    = 0
+            rejected      = 0
+            last_reject   = ""
             try:
                 with self.upload_lock:
                     pending_list = self.pending_uploads.copy()
@@ -209,7 +248,19 @@ class DBUploadManager:
                         self._mark_server_up()   # reset backoff on each success
 
                     except Exception as e:
-                        # First failure means server is down again — stop the batch.
+                        if is_data_error(e):
+                            # Server answered but rejected this row (e.g. model
+                            # too long). Park it and keep going — one bad record
+                            # must not block the whole queue.
+                            with self.upload_lock:
+                                if record in self.pending_uploads:
+                                    self.pending_uploads.remove(record)
+                            self._park_failed([record], e)
+                            rejected += 1
+                            last_reject = str(e)
+                            self._mark_server_up()
+                            continue
+                        # Connection failure — server is down again, stop the batch.
                         with self.upload_lock:
                             if record in self.pending_uploads:
                                 idx = self.pending_uploads.index(record)
@@ -225,6 +276,8 @@ class DBUploadManager:
                 print(f"[DBUploadManager] Batch done in {elapsed:.1f}s — "
                       f"{success_count} OK, {fail_count} failed, {remaining} remaining")
 
+                if self.parent_signals and rejected:
+                    self.parent_signals.upload_rejected.emit(rejected, last_reject)
                 if self.parent_signals:
                     self.parent_signals.retry_complete.emit(success_count, fail_count, remaining)
                 elif callback:

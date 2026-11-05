@@ -26,7 +26,8 @@ from PySide6.QtWidgets import (
 from html import escape
 from usb_rs import Usb_rs
 from insert_resistance2db import (
-    insert_to_mssql, fetch_model_spec, upsert_model_spec, check_schema
+    insert_to_mssql, fetch_model_spec, upsert_model_spec, check_schema,
+    MODEL_MAX_LEN,
 )
 from ui_UI_Resistance import Ui_Dialog, PointCard, build_qss, set_prop, C as UI_COLORS
 from numpad_dialog import NumpadDialog
@@ -122,20 +123,25 @@ def decode_barcode(raw):
     return result.strip()
 
 
-def decode_model_text(raw):
-    """Unified decode for all barcode / manual-entry formats.
+IGNORED_SCAN_PREFIXES = ("https://", "http://", "www.", "ppdb.tisi.go.th")
 
-    Priority:
-    1. Dollar-delimited  — PREFIX$[id]MODEL$SUFFIX  (label-printer format)
-    2. AIM Code 39 Extended — /X escape sequences   (USB HID scanner format)
-    3. Plain text — returned as-is after strip
 
-    Shared by the main window and the spec-editor dialog so barcode input is
-    cleansed the same way everywhere.
-    """
-    raw = raw.strip()
-    if not raw:
-        return ''
+def is_ignored_scan(text):
+    """True for scanned text that must never be used as a model name: URLs
+    such as the TISI QR code on the product label ("https://ppdb.tisi.go.th/...")
+    or anything longer than the DB Model column accepts."""
+    t = (text or "").strip().lower()
+    if not t:
+        return False
+    # Scanners sometimes drop/mangle characters ("ttps:/ ppdb.tisi.go.th..."),
+    # so match the URL markers anywhere, not only at the start.
+    if (t.startswith(IGNORED_SCAN_PREFIXES) or ":/" in t
+            or "tisi.go.th" in t or "ppdb." in t):
+        return True
+    return len(t) > MODEL_MAX_LEN
+
+
+def _decode_model_raw(raw):
     if '$' in raw:
         first = raw.find('$')
         after = raw[first + 1:]
@@ -148,6 +154,30 @@ def decode_model_text(raw):
         if decoded:
             return decoded
     return raw
+
+
+def decode_model_text(raw):
+    """Unified decode for all barcode / manual-entry formats.
+
+    Priority:
+    1. Dollar-delimited  — PREFIX$[id]MODEL$SUFFIX  (label-printer format)
+    2. AIM Code 39 Extended — /X escape sequences   (USB HID scanner format)
+    3. Plain text — returned as-is after strip
+
+    Returns '' for text that is not a model name (a URL / QR link, or longer
+    than MODEL_MAX_LEN) so it is ignored instead of being saved as the model —
+    otherwise every reading under it is rejected by the DB.
+
+    Shared by the main window and the spec-editor dialog so barcode input is
+    cleansed the same way everywhere.
+    """
+    raw = (raw or "").strip()
+    if not raw:
+        return ''
+    decoded = _decode_model_raw(raw)
+    if is_ignored_scan(decoded):
+        return ''
+    return decoded
 
 
 class AutoDetectThread(QThread):
@@ -589,6 +619,7 @@ class MainWindow(QDialog):
         # signals are emitted from a plain threading.Thread (not QThread).
         self.upload_signals.upload_complete.connect(self.on_upload_complete, Qt.ConnectionType.QueuedConnection)
         self.upload_signals.retry_complete.connect(self.on_retry_complete, Qt.ConnectionType.QueuedConnection)
+        self.upload_signals.upload_rejected.connect(self.on_upload_rejected, Qt.ConnectionType.QueuedConnection)
 
         self.upload_signals.spec_flush_complete.connect(
             self.on_spec_flush_complete, Qt.ConnectionType.QueuedConnection)
@@ -913,10 +944,16 @@ class MainWindow(QDialog):
             self.lower_limit = 0.0
             self.upper_limit = 1000.0
 
+        # A URL (e.g. a scanned TISI QR code) saved as the model before the
+        # scan filter existed — drop it so readings aren't rejected by the DB.
+        if is_ignored_scan(self.cleaned_model):
+            self.log_event(f"Ignoring invalid saved model '{self.cleaned_model}'")
+            self.cleaned_model = ""
+
         # Fall back to model change log when config has no model (crash / missing file)
         if not self.cleaned_model:
             recovered = self._recover_model_from_log()
-            if recovered:
+            if recovered and not is_ignored_scan(recovered):
                 self.cleaned_model = recovered
                 config_source = "recovery_log"
                 self.log_event(f"Config had no model — recovered '{recovered}' from model_changes.csv")
@@ -1074,6 +1111,10 @@ class MainWindow(QDialog):
         if ok:
             old_model = self.cleaned_model
             cleaned = self._decode_model_text(text)
+            if not cleaned and text.strip():
+                self.append_log(f"Model not changed — a URL or text over "
+                                f"{MODEL_MAX_LEN} characters is not a valid model")
+                return
             self.cleaned_model = cleaned
             self._set_model_text(cleaned)
             self.load_model_limits()
@@ -1513,6 +1554,11 @@ class MainWindow(QDialog):
         if len(raw) < 3:
             return
         decoded = self._decode_model_text(raw)
+        if not decoded and is_ignored_scan(raw):
+            # URL / TISI QR code — not a model label. Keep the current model.
+            self.log_event(f"Barcode scan ignored (URL / not a model): '{raw}'")
+            self.append_log("Barcode ignored — that is a URL/QR link, not a model label")
+            return
         if not decoded:
             self.log_event(f"Barcode scan: decode failed for '{raw}'")
             self.append_log(f"Barcode: unrecognised format — {raw}")
@@ -1830,9 +1876,19 @@ class MainWindow(QDialog):
         if self.db_manager.should_retry_now() and self.spec_queue.pending_count() > 0:
             self.spec_queue.flush_async()
 
+    def on_upload_rejected(self, count, error_msg):
+        """The server is up but refused record(s) — parked in failed_uploads.json."""
+        self._set_db_online(True)
+        self.log_event(f"DB rejected {count} record(s), moved to "
+                       f"{DBUploadManager.FAILED_FILE}: {error_msg}")
+        self.append_log(f"! {count} record(s) rejected by DB (bad data) — "
+                        f"saved to {DBUploadManager.FAILED_FILE}")
+
     def on_retry_complete(self, success_count, failed_count, remaining_count):
         """Callback when a batch retry finishes (runs on main thread)."""
         self._set_db_online(success_count > 0 or remaining_count == 0)
+        if failed_count == 0 and success_count == 0:
+            return  # every record was rejected and parked — on_upload_rejected reported it
         if remaining_count == 0 and success_count > 0:
             self.log_event(f"Batch upload complete: {success_count} record(s) sent")
             self.append_log(f"Batch upload done — {success_count} record(s) sent")
