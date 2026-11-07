@@ -66,17 +66,21 @@ CSV_HEADERS = ["Timestamp", "Resistance", "Status", "Model",
                "Point", "Seq", "LowerLimit", "UpperLimit",
                "Date", "Time", "DB_Status"]
 MODEL_CHANGE_LOG = "model_changes.csv"  # persistent record of every model switch
+MODEL_MAX_LEN = 30  # resistance.Model column width — longer names are refused by the DB
 SPEC_DECIMALS = 2  # decimal places for spec limits (entry, storage, and display)
 # Release mode: the auto-hold meter keeps returning the same held value long
 # after the probes are lifted, so blank the display to 0 once a value has
 # repeated this many polls (i.e. past the record point at consecutive_same == 2).
 HOLD_RELEASE_AFTER = 3
+# A recorded PASS/FAIL stays on screen at least this long before the judgement
+# switches to WAITING (Release mode zeroes the display ~0.5 s after recording).
+JUDGE_MIN_SHOW_S = 3.0
 
 # Serial hardware-hang recovery. A normal poll cycle is <=2 s (FETC? timeout) +
 # 0.5 s interval; if the worker's liveness stamp stops advancing for this long,
 # the serial link is wedged and we soft-recover without closing the app.
 STALL_LIMIT_S = 8.0
-STALL_CHECK_MS = 2000
+STALL_CHECK_MS = 3000
 # Watchdog backstop: main.py touches this on each successful poll; watchdog.sh
 # force-restarts if it goes stale (well above STALL_LIMIT_S + reconnect backoff
 # so in-app soft recovery always gets first chance).
@@ -174,6 +178,20 @@ def decode_model_text(raw):
         if decoded:
             return decoded
     return raw
+
+
+def model_name_problem(name):
+    """Why a model name can't be used, or None. Catches garbage before any
+    reading is recorded with it: a 35-backtick 'model' once sat at the head of
+    the upload queue and blocked ~2900 readings, since the DB refused it."""
+    if not name:
+        return "model name is empty"
+    if not any(ch.isalnum() for ch in name):
+        return f"'{name}' has no letters or digits"
+    if len(name) > MODEL_MAX_LEN:
+        return (f"model name is {len(name)} characters — the database "
+                f"allows at most {MODEL_MAX_LEN}")
+    return None
 
 
 class AutoDetectThread(QThread):
@@ -444,6 +462,9 @@ class ModelSpecDialog(QDialog):
         model = self.model_edit.text().strip()
         if not model:
             return None, None, "model name is required"
+        problem = model_name_problem(model)
+        if problem:
+            return None, None, problem
         if not self._rows:
             return None, None, "add at least one measurement point"
         points = []
@@ -664,6 +685,12 @@ class MainWindow(QDialog):
         self.detect_retry_timer = QTimer(self)
         self.detect_retry_timer.setSingleShot(True)
         self.detect_retry_timer.timeout.connect(self.start_auto_detect)
+        # Judgement → WAITING once the display is 0 and the last result has
+        # been visible for JUDGE_MIN_SHOW_S.
+        self._judged_at = 0.0
+        self.waiting_timer = QTimer(self)
+        self.waiting_timer.setSingleShot(True)
+        self.waiting_timer.timeout.connect(self._show_waiting)
         self.retry_upload_timer = QTimer(self)
         self.retry_upload_timer.setSingleShot(False)
         self.retry_upload_timer.timeout.connect(self.retry_pending_uploads)
@@ -797,6 +824,8 @@ class MainWindow(QDialog):
         self.wifi_thread = WiFiWorkerThread()
         self.wifi_thread.wifi_ready.connect(self._on_wifi_ready)
         self.wifi_thread.start()
+
+        self._show_waiting()   # display starts at 0 — no result yet
 
     def _apply_ui_scale(self):
         screen = QApplication.primaryScreen().availableGeometry()
@@ -1284,6 +1313,13 @@ class MainWindow(QDialog):
         if ok:
             old_model = self.cleaned_model
             cleaned = self._decode_model_text(text)
+            problem = model_name_problem(cleaned)
+            if problem:
+                self.log_event(f"Model entry refused: {problem}")
+                self.append_log(f"! Model not changed — {problem}")
+                QMessageBox.warning(self, "Invalid model name",
+                                    f"The model was not changed:\n{problem}")
+                return
             self.cleaned_model = cleaned
             self._set_model_text(cleaned)
             self.load_model_limits()
@@ -1651,7 +1687,7 @@ class MainWindow(QDialog):
         # In release mode, clear a stale held value immediately so the change is
         # visible without waiting for the next standby poll.
         if not checked:
-            self.ui.doubleSpinBox_Measure.setValue(0.0)
+            self._set_measure_zero()
         self.save_config()
 
     def on_point_card_tapped(self, index):
@@ -1941,6 +1977,11 @@ class MainWindow(QDialog):
             self.log_event(f"Barcode scan: decode failed for '{raw}'")
             self.append_log(f"Barcode: unrecognised format — {raw}")
             return
+        problem = model_name_problem(decoded)
+        if problem:
+            self.log_event(f"Barcode scan refused '{raw}': {problem}")
+            self.append_log(f"! Barcode ignored — {problem}")
+            return
         self.log_event(f"Barcode scan: '{raw}' → '{decoded}'")
         old_model = self.cleaned_model
         self.cleaned_model = decoded
@@ -2078,7 +2119,7 @@ class MainWindow(QDialog):
                 self.previous_numeric = None
                 self.previous_raw = None
                 if not self.hold_previous:
-                    self.ui.doubleSpinBox_Measure.setValue(0.0)
+                    self._set_measure_zero()
                 return
             if self.previous_numeric is None or abs(current_val - self.previous_numeric) >= stable_eps:
                 self.previous_numeric = current_val
@@ -2110,12 +2151,12 @@ class MainWindow(QDialog):
         self._update_measure_title()
 
         if not self.hold_previous and self.consecutive_same >= HOLD_RELEASE_AFTER:
-            self.ui.doubleSpinBox_Measure.setValue(0.0)
+            self._set_measure_zero()
         elif rt_val is not None:
             # Shows Rt0 when temperature correction applies, otherwise raw Rt.
             self.ui.doubleSpinBox_Measure.setValue(self._display_resistance(rt_val))
         elif not self.hold_previous:
-            self.ui.doubleSpinBox_Measure.setValue(0.0)
+            self._set_measure_zero()
 
         if record:
             # Temperature correction: judge and record Rt0 instead of Rt. When TC
@@ -2150,6 +2191,10 @@ class MainWindow(QDialog):
             # Ensure model is set; if empty, prompt once at record time
             if not cleaned_model:
                 text, ok = self._prompt_model_text()
+                problem = model_name_problem(self._decode_model_text(text)) if ok else None
+                if problem:
+                    self.append_log(f"! Model not set — {problem}")
+                    ok = False
                 if ok:
                     cleaned_model = self._decode_model_text(text)
                     self.log_model_change("CHANGE", "", cleaned_model, "prompt")
@@ -2463,6 +2508,24 @@ class MainWindow(QDialog):
             self._media_player.setSource(QUrl.fromLocalFile(path))
             self._media_player.play()
 
+    def _set_measure_zero(self):
+        """Blank the measured value (standby) — the judgement follows to WAITING."""
+        self.ui.doubleSpinBox_Measure.setValue(0.0)
+        self._show_waiting()
+
+    def _show_waiting(self):
+        """Judgement → WAITING while the display reads 0, but only after the last
+        PASS/FAIL has been on screen for JUDGE_MIN_SHOW_S."""
+        if self.ui.doubleSpinBox_Measure.value() != 0.0:
+            return   # a part is already being measured
+        remaining = JUDGE_MIN_SHOW_S - (time.monotonic() - self._judged_at)
+        if remaining > 0:
+            self.waiting_timer.start(int(remaining * 1000) + 1)
+            return
+        self.ui.pushButton_Judgement.setText("WAITING")
+        self.ui.pushButton_Judgement.setStyleSheet(
+            "background-color: #607d8b; color: white; font-weight: bold;")
+
     def set_judgement_status(self, pass_result):
         """Update judgement indicator button based on pass/fail result."""
         judgement_map = {
@@ -2473,6 +2536,9 @@ class MainWindow(QDialog):
         text, color = judgement_map.get(pass_result, ("N/A", "#9e9e9e"))
         self.ui.pushButton_Judgement.setText(text)
         self.ui.pushButton_Judgement.setStyleSheet(f"background-color: {color}; color: white; font-weight: bold;")
+        if pass_result is not None:
+            self._judged_at = time.monotonic()
+            self.waiting_timer.stop()   # a fresh result wins over a pending WAITING
         if pass_result is True:
             self._play_sound("ResistancePass_TH.mp3")
         elif pass_result is False:

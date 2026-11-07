@@ -9,7 +9,7 @@ from collections import OrderedDict
 from datetime import datetime
 from threading import Thread, Lock
 from PySide6.QtCore import Signal, QObject
-from insert_resistance2db import insert_to_mssql, upsert_model_spec
+from insert_resistance2db import insert_to_mssql, upsert_model_spec, is_permanent_db_error
 
 
 class UploadSignals(QObject):
@@ -20,6 +20,9 @@ class UploadSignals(QObject):
 
 class DBUploadManager:
     PENDING_FILE    = "pending_uploads.json"
+    # Records the DB permanently refuses (e.g. model longer than the column)
+    # are moved here so they can never block the queue again. Nothing is lost.
+    REJECTED_FILE   = "rejected_uploads.json"
     UPLOAD_TIMEOUT  = 5    # seconds per upload call
     MAX_BATCH_TIME  = 120  # wall-clock limit for one batch flush (seconds)
 
@@ -98,8 +101,33 @@ class DBUploadManager:
 
     # ── Queue management ──────────────────────────────────────────────────────
 
+    def _reject(self, record, error):
+        """Move a permanently refused record out of the queue into REJECTED_FILE."""
+        with self.upload_lock:
+            if record in self.pending_uploads:
+                self.pending_uploads.remove(record)
+            try:
+                with open(self.REJECTED_FILE, "r", encoding="utf-8") as f:
+                    rejected = json.load(f)
+            except (OSError, ValueError):
+                rejected = []
+            rejected.append(dict(record, error=str(error),
+                                 rejected_at=datetime.now().isoformat()))
+            with open(self.REJECTED_FILE, "w", encoding="utf-8") as f:
+                json.dump(rejected, f, indent=2, ensure_ascii=False)
+        print(f"[DBUploadManager] Rejected by DB, moved to {self.REJECTED_FILE}: "
+              f"{record.get('model')!r}={record.get('value')} — {error}")
+
+    @staticmethod
+    def _measured_at(record):
+        try:
+            return datetime.fromisoformat(record["timestamp"])
+        except (KeyError, TypeError, ValueError):
+            return None
+
     def add_pending_upload(self, model, value, status,
-                           point=None, seq=None, lower=None, upper=None):
+                           point=None, seq=None, lower=None, upper=None,
+                           measured_at=None):
         with self.upload_lock:
             record = {
                 "model":         model,
@@ -109,7 +137,7 @@ class DBUploadManager:
                 "seq":           seq,
                 "lower":         lower,
                 "upper":         upper,
-                "timestamp":     datetime.now().isoformat(),
+                "timestamp":     (measured_at or datetime.now()).isoformat(),
                 "retry_count":   0,
             }
             self.pending_uploads.append(record)
@@ -133,10 +161,11 @@ class DBUploadManager:
     def upload_async(self, model, value, status, callback=None,
                      point=None, seq=None, lower=None, upper=None):
         """Upload in background. If server is known down, queue directly."""
+        measured_at = datetime.now()
         if not self.server_reachable:
             # Skip the network attempt — just queue it.
             count = self.add_pending_upload(model, value, status,
-                                            point, seq, lower, upper)
+                                            point, seq, lower, upper, measured_at)
             wait  = int(self.seconds_until_retry())
             msg   = f"Server down — queued ({count} pending, retry in {wait}s)"
             if self.parent_signals:
@@ -147,14 +176,25 @@ class DBUploadManager:
             try:
                 insert_to_mssql(model, value, status,
                                 point=point, seq=seq, lower=lower, upper=upper,
-                                timeout=self.UPLOAD_TIMEOUT)
+                                timeout=self.UPLOAD_TIMEOUT, measured_at=measured_at)
                 self._mark_server_up()
                 print(f"[DBUploadManager] Upload OK: {model}={value}")
                 if self.parent_signals:
                     self.parent_signals.upload_complete.emit(True, "")
             except Exception as e:
+                if is_permanent_db_error(e):
+                    # The server answered: it refused this record. Don't queue
+                    # it (it would block every later record) or mark it down.
+                    self._reject({"model": model, "value": value, "status": status,
+                                  "point": point, "seq": seq, "lower": lower,
+                                  "upper": upper, "timestamp": measured_at.isoformat(),
+                                  "retry_count": 0}, e)
+                    if self.parent_signals:
+                        self.parent_signals.upload_complete.emit(
+                            False, f"Rejected by DB (saved to {self.REJECTED_FILE}): {e}")
+                    return
                 count = self.add_pending_upload(model, value, status,
-                                                point, seq, lower, upper)
+                                                point, seq, lower, upper, measured_at)
                 self._mark_server_down()
                 print(f"[DBUploadManager] Upload failed ({count} pending): {e}")
                 if self.parent_signals:
@@ -181,8 +221,9 @@ class DBUploadManager:
 
         def retry_worker():
             self.is_uploading = True
-            success_count = 0
-            fail_count    = 0
+            success_count  = 0
+            fail_count     = 0
+            rejected_count = 0
             try:
                 with self.upload_lock:
                     pending_list = self.pending_uploads.copy()
@@ -201,6 +242,7 @@ class DBUploadManager:
                             point=record.get('point'), seq=record.get('seq'),
                             lower=record.get('lower'), upper=record.get('upper'),
                             timeout=self.UPLOAD_TIMEOUT,
+                            measured_at=self._measured_at(record),
                         )
                         with self.upload_lock:
                             if record in self.pending_uploads:
@@ -209,6 +251,11 @@ class DBUploadManager:
                         self._mark_server_up()   # reset backoff on each success
 
                     except Exception as e:
+                        if is_permanent_db_error(e):
+                            # Bad record, healthy server: set it aside and go on.
+                            self._reject(record, e)
+                            rejected_count += 1
+                            continue
                         # First failure means server is down again — stop the batch.
                         with self.upload_lock:
                             if record in self.pending_uploads:
@@ -223,7 +270,8 @@ class DBUploadManager:
                 remaining = self.get_pending_count()
                 elapsed   = time.time() - batch_start
                 print(f"[DBUploadManager] Batch done in {elapsed:.1f}s — "
-                      f"{success_count} OK, {fail_count} failed, {remaining} remaining")
+                      f"{success_count} OK, {fail_count} failed, "
+                      f"{rejected_count} rejected, {remaining} remaining")
 
                 if self.parent_signals:
                     self.parent_signals.retry_complete.emit(success_count, fail_count, remaining)

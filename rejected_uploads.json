@@ -1,0 +1,28 @@
+[
+  {
+    "model": "```````````````````````````````````",
+    "value": 3.37,
+    "status": "OK",
+    "point": null,
+    "seq": null,
+    "lower": null,
+    "upper": null,
+    "timestamp": "2026-10-19T11:19:22.253387",
+    "retry_count": 1121,
+    "error": "Error inserting to MSSQL: ('42000', \"[42000] [Microsoft][ODBC Driver 18 for SQL Server][SQL Server]String or binary data would be truncated in table 'ENGINEER_DB.dbo.resistance', column 'Model'. Truncated value: '``````````````````````````````'. (2628) (SQLExecDirectW)\")",
+    "rejected_at": "2026-11-05T03:12:52.620656"
+  },
+  {
+    "model": "```````````````````````````````````",
+    "value": 3.34,
+    "status": "OK",
+    "point": null,
+    "seq": null,
+    "lower": null,
+    "upper": null,
+    "timestamp": "2026-10-19T11:19:54.762198",
+    "retry_count": 0,
+    "error": "Error inserting to MSSQL: ('42000', \"[42000] [Microsoft][ODBC Driver 18 for SQL Server][SQL Server]String or binary data would be truncated in table 'ENGINEER_DB.dbo.resistance', column 'Model'. Truncated value: '``````````````````````````````'. (2628) (SQLExecDirectW)\")",
+    "rejected_at": "2026-11-05T03:12:52.651907"
+  }
+]

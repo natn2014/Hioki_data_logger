@@ -1,5 +1,5 @@
 {
-  "current_model": "2I5F00GSVIPWBKTH-MM-4FHX-C1",
+  "current_model": "2581D(V2)-MM-4RFHMX-A1",
   "models": {
     "TESE": {
       "lower_limit": 1.7,
@@ -64,8 +64,277 @@
         "t0": 20.0,
         "alpha_ppm": 3930
       }
+    },
+    "2500D(27)-MM-3EFHMX": {
+      "lower_limit": 2.73,
+      "upper_limit": 3.22,
+      "points": [
+        {
+          "lower": 2.73,
+          "name": "A-B",
+          "seq": 1,
+          "upper": 3.22
+        },
+        {
+          "lower": 7.4,
+          "name": "B-C",
+          "seq": 2,
+          "upper": 8.93
+        }
+      ],
+      "tc": {
+        "enabled": true,
+        "t0": 23.0,
+        "alpha_ppm": 3930
+      }
+    },
+    "2581D(V2)-MM-4RFHMX-A1": {
+      "lower_limit": 2.81,
+      "upper_limit": 3.33,
+      "points": [
+        {
+          "lower": 6.05,
+          "name": "A-B",
+          "seq": 1,
+          "upper": 7.3
+        },
+        {
+          "lower": 2.81,
+          "name": "B-C",
+          "seq": 2,
+          "upper": 3.33
+        }
+      ],
+      "tc": {
+        "enabled": true,
+        "t0": 20.0,
+        "alpha_ppm": 3930
+      }
+    },
+    "2581D(V2)-MM-": {
+      "lower_limit": 2.73,
+      "upper_limit": 3.32
+    },
+    "4RFHMX-A1": {
+      "lower_limit": 2.73,
+      "upper_limit": 3.32
+    },
+    "2581D(V2)-MM-4RFHMX-": {
+      "lower_limit": 2.73,
+      "upper_limit": 3.32
+    },
+    "2581D(Y4)-MM-4LFHMNX-A1": {
+      "lower_limit": 2.81,
+      "upper_limit": 3.33,
+      "tc": {
+        "enabled": true,
+        "t0": 20.0,
+        "alpha_ppm": 3930
+      },
+      "points": [
+        {
+          "lower": 2.81,
+          "name": "A-B",
+          "seq": 1,
+          "upper": 3.33
+        },
+        {
+          "lower": 6.05,
+          "name": "B-C",
+          "seq": 2,
+          "upper": 7.3
+        }
+      ]
+    },
+    "25K45(10)-MM-4FYMX-C1": {
+      "lower_limit": 2.73,
+      "upper_limit": 3.59,
+      "points": [
+        {
+          "lower": 2.73,
+          "name": "A-B",
+          "seq": 1,
+          "upper": 3.59
+        }
+      ],
+      "tc": {
+        "enabled": true,
+        "t0": 23.0,
+        "alpha_ppm": 3930
+      }
+    },
+    "25K45(40)-MM-4FYMX-C1": {
+      "lower_limit": 2.73,
+      "upper_limit": 3.59,
+      "points": [
+        {
+          "lower": 2.73,
+          "name": "A-B",
+          "seq": 1,
+          "upper": 3.59
+        }
+      ],
+      "tc": {
+        "enabled": true,
+        "t0": 23.0,
+        "alpha_ppm": 3930
+      }
+    },
+    "A01-00593": {
+      "lower_limit": 2.73,
+      "upper_limit": 3.65
+    },
+    "A01-00272": {
+      "lower_limit": 2.73,
+      "upper_limit": 3.65
+    },
+    "A01-00521": {
+      "lower_limit": 2.73,
+      "upper_limit": 3.65
+    },
+    ",l.": {
+      "lower_limit": 2.73,
+      "upper_limit": 3.65
+    },
+    "..................k": {
+      "lower_limit": 2.73,
+      "upper_limit": 3.65
+    },
+    "TEST T62": {
+      "lower_limit": 1.5,
+      "upper_limit": 1.6,
+      "points": [
+        {
+          "lower": 1.5,
+          "name": "A-B",
+          "seq": 1,
+          "upper": 1.6
+        },
+        {
+          "lower": 1.6,
+          "name": "B-C",
+          "seq": 2,
+          "upper": 1.7
+        }
+      ],
+      "tc": {
+        "enabled": true,
+        "t0": 20.0,
+        "alpha_ppm": 3930
+      }
+    },
+    "A01-00520": {
+      "lower_limit": 2.73,
+      "upper_limit": 3.65
+    },
+    "581D": {
+      "lower_limit": 2.73,
+      "upper_limit": 3.65,
+      "points": [
+        {
+          "seq": 1,
+          "name": "A-B",
+          "lower": 3.05,
+          "upper": 3.45
+        },
+        {
+          "seq": 2,
+          "name": "B-C",
+          "lower": 6.55,
+          "upper": 7.74
+        }
+      ]
+    },
+    "BODA088040B118": {
+      "lower_limit": 2.81,
+      "upper_limit": 3.38
+    },
+    "```````````````````````````````````": {
+      "lower_limit": 2.81,
+      "upper_limit": 3.38
+    },
+    "581D-v2": {
+      "lower_limit": 2.81,
+      "upper_limit": 3.38
+    },
+    "2581D(Y7)-MM-4RFHMNX-A1(LF)": {
+      "lower_limit": 2.81,
+      "upper_limit": 3.33,
+      "points": [
+        {
+          "lower": 2.81,
+          "name": "A-B",
+          "seq": 1,
+          "upper": 3.33
+        },
+        {
+          "lower": 6.05,
+          "name": "B-C",
+          "seq": 2,
+          "upper": 7.3
+        }
+      ],
+      "tc": {
+        "enabled": true,
+        "t0": 20.0,
+        "alpha_ppm": 3930
+      }
+    },
+    "2581D(U4)-MM-4LFHMX-A1": {
+      "lower_limit": 2.81,
+      "upper_limit": 3.33,
+      "tc": {
+        "enabled": true,
+        "t0": 20.0,
+        "alpha_ppm": 3930
+      },
+      "points": [
+        {
+          "lower": 2.81,
+          "name": "A-B",
+          "seq": 1,
+          "upper": 3.33
+        },
+        {
+          "lower": 6.05,
+          "name": "B-C",
+          "seq": 2,
+          "upper": 7.3
+        }
+      ]
+    },
+    "2581D(28)-MM-4LFHMX-A1": {
+      "lower_limit": 2.81,
+      "upper_limit": 3.33,
+      "points": [
+        {
+          "lower": 2.81,
+          "name": "A-B",
+          "seq": 1,
+          "upper": 3.33
+        },
+        {
+          "lower": 6.05,
+          "name": "B-C",
+          "seq": 2,
+          "upper": 7.3
+        }
+      ],
+      "tc": {
+        "enabled": true,
+        "t0": 20.0,
+        "alpha_ppm": 3930
+      }
+    },
+    "BODA292040B118": {
+      "lower_limit": 2.81,
+      "upper_limit": 3.33
+    },
+    "BODA089040B118": {
+      "lower_limit": 7.3,
+      "upper_limit": 6.05
     }
   },
-  "hold_previous": true,
-  "tc_x_is_temp": false
+  "hold_previous": false,
+  "tc_x_is_temp": true
 }

@@ -48,9 +48,36 @@ def _open_connection(timeout=5):
     return conn
 
 
+# SQL Server errors that retrying can never fix: bad data, not a down server.
+# 2628 / 8152 = "String or binary data would be truncated" (e.g. Model too long).
+_PERMANENT_SQL_ERRORS = ("(2628)", "(8152)")
+
+
+def is_permanent_db_error(exc):
+    """True when the DB refused the *data* (retrying the same record can never
+    succeed), False for connection/timeout problems worth retrying."""
+    while exc is not None:
+        if isinstance(exc, ValueError):
+            return True
+        if isinstance(exc, (pyodbc.DataError, pyodbc.IntegrityError)):
+            return True
+        if isinstance(exc, pyodbc.Error):
+            state = str(exc.args[0]) if exc.args else ""
+            if state.startswith(("22", "23")):
+                return True
+            if any(code in str(exc) for code in _PERMANENT_SQL_ERRORS):
+                return True
+        exc = exc.__cause__
+    return False
+
+
 def insert_to_mssql(model, value, status, point=None, seq=None,
-                    lower=None, upper=None, timeout=5):
+                    lower=None, upper=None, timeout=5, measured_at=None):
     """Insert one resistance reading, optionally tagged with its spec point.
+
+    measured_at (datetime) stamps Timestamp/Date/Time with when the reading was
+    taken — queued readings keep their real time instead of the upload time.
+    Without it the server time (getdate()) is used, as before.
 
     point/seq/lower/upper describe which measurement point of a multi-point
     sequence produced this reading (and the range it was judged against). They
@@ -68,16 +95,22 @@ def insert_to_mssql(model, value, status, point=None, seq=None,
     conn = _open_connection(timeout)
     try:
         cursor = conn.cursor()
-        current_date = datetime.now().strftime('%Y-%m-%d')
-        current_time = datetime.now().strftime('%H:%M:%S')
-        sql_query = """
+        stamp = measured_at or datetime.now()
+        current_date = stamp.strftime('%Y-%m-%d')
+        current_time = stamp.strftime('%H:%M:%S')
+        params = (value, status, model, current_date, current_time,
+                  point, seq, lower, upper)
+        if measured_at is not None:
+            ts_sql = "?"
+            params = (measured_at.replace(microsecond=0),) + params
+        else:
+            ts_sql = "getdate()"
+        sql_query = f"""
             INSERT INTO resistance
                 ([Timestamp], Resistance, Status, Model, [Date], [Time],
                  Point, Seq, LowerLimit, UpperLimit)
-            VALUES (getdate(), ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES ({ts_sql}, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
-        params = (value, status, model, current_date, current_time,
-                  point, seq, lower, upper)
 
         # Wrap execute+commit in a thread so a hung query can't block the caller
         # indefinitely even if pyodbc/GIL behaviour is non-ideal on ARM.
