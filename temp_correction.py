@@ -42,22 +42,25 @@ ALPHA_MIN, ALPHA_MAX = -9999, 9999
 # out-of-range value visible.
 TEMP_AXIS = (0.0, 50.0)
 
-# Chart colours: categorical slots 1 and 2 of the validated dataviz palette on
-# the light surface (CVD dE 24.7, contrast >= 3:1). Identity is also carried by
-# marker shape and direct labels, never colour alone.
-COLOR_STANDARD = "#2a78d6"   # blue   — (t0, Rt0)
-COLOR_ACTUAL = "#eb6834"     # orange — (t, Rt)
-COLOR_LINE = "#8a8984"       # neutral characteristic line R(T)
-SURFACE = "#fcfcfb"
-TEXT_PRIMARY = "#0b0b0b"
-TEXT_SECONDARY = "#52514e"
-GRID = "#e4e3df"
+# Dark kiosk theme (MSW palette, ui_UI_Resistance.C). Identity is also carried
+# by marker shape and direct labels, never colour alone.
+from ui_UI_Resistance import C as _UI
+COLOR_STANDARD = _UI["accent_hi"]   # cyan   — (t0, Rt0)
+COLOR_ACTUAL = "#f08a4b"            # orange — (t, Rt)
+COLOR_LINE = _UI["dim"]             # neutral characteristic line R(T)
+SURFACE = _UI["panel"]
+TEXT_PRIMARY = _UI["ink"]
+TEXT_SECONDARY = _UI["dim"]
+GRID = _UI["edge"]
+_BTN_QSS = (f"QPushButton{{background:{_UI['panel2']};color:{_UI['ink']};"
+            f"border:2px solid {_UI['accent']};border-radius:8px;padding:4px 10px;}}"
+            f"QPushButton:pressed{{background:{_UI['panel3']};}}")
 # Histogram: one colour per seq, in this fixed order (seq 1, 2, ...). Blue and
 # orange are taken by the scatter (Standard/Actual), and red/green read as
 # fail/pass on a QC screen, so seqs use the other validated categorical slots.
 # Ordered so no adjacent pair falls below the CVD floor; seq 6+ folds to grey.
-SEQ_COLORS = ["#1baf7a", "#4a3aa7", "#eda100", "#e87ba4", "#008300"]
-SEQ_OTHER = "#8a8984"
+SEQ_COLORS = ["#1baf7a", "#9d8cf0", "#eda100", "#e87ba4", "#4cc24c"]
+SEQ_OTHER = _UI["dim"]
 HIST_BINS = 30
 
 
@@ -124,8 +127,8 @@ def _card(title, value_font_pt, accent=None):
     """A titled readout card: returns (frame, value_label)."""
     frame = QFrame()
     frame.setFrameShape(QFrame.Shape.StyledPanel)
-    border = accent or "#c9c8c3"
-    frame.setStyleSheet(f"QFrame{{border:2px solid {border};border-radius:8px;}}")
+    border = accent or _UI["edge"]
+    frame.setStyleSheet(f"QFrame{{background:{_UI['panel']};border:2px solid {border};border-radius:8px;}}")
     lay = QVBoxLayout(frame)
     lay.setContentsMargins(10, 6, 10, 6)
     lay.setSpacing(2)
@@ -211,10 +214,7 @@ class TempCorrectionTab(QWidget):
         for b in (self.btn_t0, self.btn_alpha):
             b.setFont(btn_font)
             b.setMinimumHeight(56)
-            b.setStyleSheet(
-                "QPushButton{background:#ffffff;color:#0b0b0b;border:2px solid #2a78d6;"
-                "border-radius:8px;padding:4px 10px;}"
-                "QPushButton:pressed{background:#eaf2fc;}")
+            b.setStyleSheet(_BTN_QSS)
         self.btn_t0.clicked.connect(self._edit_t0)
         self.btn_alpha.clicked.connect(self._edit_alpha)
         row.addWidget(self.btn_t0, 2)
@@ -223,6 +223,7 @@ class TempCorrectionTab(QWidget):
         self.btn_reset = QPushButton("⟲ Defaults")
         self.btn_reset.setFont(btn_font)
         self.btn_reset.setMinimumHeight(56)
+        self.btn_reset.setStyleSheet(_BTN_QSS)
         self.btn_reset.clicked.connect(self._reset_defaults)
         row.addWidget(self.btn_reset, 1)
         root.addLayout(row)
@@ -249,7 +250,7 @@ class TempCorrectionTab(QWidget):
         self.lbl_formula.setFont(ff)
         self.lbl_formula.setWordWrap(True)
         self.lbl_formula.setStyleSheet(
-            "background:#f3f2ef;border-radius:6px;padding:6px 10px;color:#0b0b0b;")
+            f"background:{_UI['panel2']};border-radius:6px;padding:6px 10px;color:{_UI['ink']};")
         root.addWidget(self.lbl_formula)
 
         # Row 4: chart selector (one chart at a time) + scatter axis swap + chart
@@ -263,15 +264,14 @@ class TempCorrectionTab(QWidget):
             b.setFont(btn_font)
             b.setMinimumHeight(48)
             b.setStyleSheet(
-                "QPushButton{background:#ffffff;color:#0b0b0b;border:2px solid #2a78d6;"
-                "border-radius:8px;padding:4px 14px;}"
-                "QPushButton:checked{background:#2a78d6;color:white;}")
+                _BTN_QSS + f"QPushButton:checked{{background:{_UI['accent']};color:{_UI['bg']};}}")
             b.clicked.connect(lambda _c=False, k=key: self._set_chart(k))
             self.chart_buttons.addButton(b)
             axis_row.addWidget(b)
         self.btn_axis = QPushButton()
         self.btn_axis.setFont(btn_font)
         self.btn_axis.setMinimumHeight(48)
+        self.btn_axis.setStyleSheet(_BTN_QSS)
         self.btn_axis.clicked.connect(self._toggle_axis)
         axis_row.addWidget(self.btn_axis, 1)
         root.addLayout(axis_row)

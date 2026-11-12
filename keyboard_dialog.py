@@ -11,10 +11,13 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
+from ui_UI_Resistance import C
 
 
 def _screen_scale():
-    screen = QApplication.primaryScreen().availableGeometry()
+    # Whole screen (see main.ui_scale): the available area shrinks while the
+    # on-screen keyboard is up.
+    screen = QApplication.primaryScreen().geometry()
     return min(screen.width() / 1280.0, screen.height() / 800.0, 1.0)
 
 
@@ -65,20 +68,20 @@ class KeyboardDialog(QDialog):
         return f
 
     def _make_key(self, label, kind="key"):
-        btn = QPushButton(label)
+        btn = QPushButton(label.replace("&", "&&"))   # "&" alone is a mnemonic marker
         btn.setFont(self._sf(18, bold=True))
         btn.setMinimumSize(self._px(64), self._px(64))
         btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # keep focus in the display
-        palette = {
-            "key":    ("#2980b9", "#3498db"),
-            "action": ("#2c3e50", "#34495e"),
-            "warn":   ("#c0392b", "#e74c3c"),
+        bg, fg = {
+            "key":    (C["panel3"], C["ink"]),
+            "action": (C["panel2"], C["accent_hi"]),
+            "warn":   (C["fail_deep"], C["fail"]),
         }[kind]
         btn.setStyleSheet(
-            f"QPushButton{{background:{palette[0]};color:white;border-radius:8px;}}"
-            f"QPushButton:pressed{{background:{palette[1]};}}"
-            f"QPushButton:checked{{background:#16a085;border:2px solid #1abc9c;}}"
+            f"QPushButton{{background:{bg};color:{fg};border:1px solid {C['edge']};border-radius:10px;}}"
+            f"QPushButton:pressed{{background:{C['accent']};color:{C['bg']};}}"
+            f"QPushButton:checked{{background:#17394a;border:2px solid {C['accent']};color:{C['accent_hi']};}}"
         )
         return btn
 
@@ -92,7 +95,7 @@ class KeyboardDialog(QDialog):
         title_lbl = QLabel(title)
         title_lbl.setFont(self._sf(16, bold=True))
         title_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title_lbl.setStyleSheet("color: #ddd;")
+        title_lbl.setStyleSheet(f"color: {C['dim']};")
         outer.addWidget(title_lbl)
 
         self.display = QLineEdit(current_text)
@@ -101,8 +104,8 @@ class KeyboardDialog(QDialog):
         self.display.setMaxLength(self._max_length)
         self.display.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.display.setStyleSheet(
-            "background-color:#111; color:#00ff88; padding:8px 16px; "
-            "border-radius:6px; border:2px solid #444;"
+            f"background-color:{C['bg']}; color:{C['accent_hi']}; padding:8px 16px; "
+            f"border-radius:8px; border:2px solid {C['accent']};"
         )
         # A scanner ends its burst with Enter — treat that as OK.
         self.display.returnPressed.connect(self.accept)
@@ -159,12 +162,12 @@ class KeyboardDialog(QDialog):
             b.setMinimumHeight(self._px(66))
             b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         cancel_btn.setStyleSheet(
-            "QPushButton{background:#555;color:white;border-radius:8px;}"
-            "QPushButton:pressed{background:#666;}"
+            f"QPushButton{{background:{C['panel2']};color:{C['ink']};border:1px solid {C['edge']};border-radius:10px;}}"
+            f"QPushButton:pressed{{background:{C['panel3']};}}"
         )
         ok_btn.setStyleSheet(
-            "QPushButton{background:#27ae60;color:white;border-radius:8px;}"
-            "QPushButton:pressed{background:#2ecc71;}"
+            f"QPushButton{{background:{C['pass_edge']};color:white;border:1px solid {C['pass']};border-radius:10px;}}"
+            f"QPushButton:pressed{{background:{C['pass']};}}"
         )
         cancel_btn.clicked.connect(self.reject)
         ok_btn.clicked.connect(self.accept)
@@ -172,7 +175,7 @@ class KeyboardDialog(QDialog):
         act.addWidget(ok_btn)
         outer.addLayout(act)
 
-        self.setStyleSheet("background-color: #1a1a2e;")
+        self.setStyleSheet(f"QDialog{{background-color: {C['panel']}; border: 2px solid {C['edge']};}}")
         self.setMinimumWidth(self._px(880))
 
         self.display.setFocus()

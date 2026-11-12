@@ -16,28 +16,30 @@ import serial
 import serial.tools.list_ports
 from datetime import datetime
 from threading import Thread
-from PySide6.QtCore import QTimer, QThread, Signal, Qt, QStringListModel, QEvent, QUrl
+from PySide6.QtCore import QTimer, QThread, Signal, Qt, QEvent, QUrl
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtWidgets import (
     QApplication, QDialog, QMessageBox, QAbstractSpinBox,
     QPushButton, QHBoxLayout, QVBoxLayout, QLabel, QLineEdit, QDoubleSpinBox,
-    QScrollArea, QWidget, QFrame, QSizePolicy, QGridLayout, QLayout
+    QScrollArea, QScroller, QWidget, QStackedWidget
 )
-from PySide6.QtGui import QFont, QFontMetrics
+from html import escape
 from usb_rs import Usb_rs
 from insert_resistance2db import (
-    insert_to_mssql, fetch_model_spec, upsert_model_spec, check_schema
+    insert_to_mssql, fetch_model_spec, upsert_model_spec, check_schema,
+    MODEL_MAX_LEN,
 )
-from ui_UI_Resistance import Ui_Dialog
+from ui_UI_Resistance import Ui_Dialog, PointCard, build_qss, set_prop, C as UI_COLORS
 from numpad_dialog import NumpadDialog
 from keyboard_dialog import KeyboardDialog
 from db_upload_manager import DBUploadManager, UploadSignals, SpecQueueManager
+from i18n import tr, set_language, get_language, DEFAULT_LANGUAGE
 from temp_correction import (
     TempCorrectionTab, correct_resistance, normalize_tc_settings,
     default_tc_settings, TEMP_STALE_S,
 )
 
-# RS485/Modbus ambient-temperature sensor (optional: needs pymodbus + matplotlib).
+# RS485/Modbus object-temperature sensor (optional: needs pymodbus + matplotlib).
 try:
     import rs485_temperature_monitor as rs485
     _RS485_IMPORT_ERROR = ""
@@ -66,54 +68,82 @@ CSV_HEADERS = ["Timestamp", "Resistance", "Status", "Model",
                "Point", "Seq", "LowerLimit", "UpperLimit",
                "Date", "Time", "DB_Status"]
 MODEL_CHANGE_LOG = "model_changes.csv"  # persistent record of every model switch
-MODEL_MAX_LEN = 30  # resistance.Model column width — longer names are refused by the DB
 SPEC_DECIMALS = 2  # decimal places for spec limits (entry, storage, and display)
-# Release mode: the auto-hold meter keeps returning the same held value long
-# after the probes are lifted, so blank the display to 0 once a value has
-# repeated this many polls (i.e. past the record point at consecutive_same == 2).
-HOLD_RELEASE_AFTER = 3
-# A recorded PASS/FAIL stays on screen at least this long before the judgement
-# switches to WAITING (Release mode zeroes the display ~0.5 s after recording).
-JUDGE_MIN_SHOW_S = 3.0
+# Waiting time (operator setting, numpad; config "waiting_delay_s"). Release
+# mode: with HOLD:AUTO ON the meter keeps returning the same held value on every
+# FETC? after the probes are lifted, so a value still repeating this long after
+# it was recorded is treated as open circuit → WAITING. The recorded PASS/FAIL
+# is always readable for this long first.
+WAITING_DELAY_DEFAULT_S = 5.0
+WAITING_DELAY_MAX_S = 60.0
+# NG reconfirm: an NG is not uploaded until the operator re-measures the point
+# NG this many more times, or presses Confirm NG (config "ng_reconfirm_max").
+NG_RECONFIRM_DEFAULT_MAX = 5
+BLINK_MS = 500   # current point card blink period
 
 # Serial hardware-hang recovery. A normal poll cycle is <=2 s (FETC? timeout) +
 # 0.5 s interval; if the worker's liveness stamp stops advancing for this long,
 # the serial link is wedged and we soft-recover without closing the app.
 STALL_LIMIT_S = 8.0
-STALL_CHECK_MS = 3000
+STALL_CHECK_MS = 2000
 # Watchdog backstop: main.py touches this on each successful poll; watchdog.sh
 # force-restarts if it goes stale (well above STALL_LIMIT_S + reconnect backoff
 # so in-app soft recovery always gets first chance).
-# USB status card: state -> (text, colour). Also sizes the card (widest text).
-USB_STATES = {
-    "connected":    ("● USB  Connected",    "#4CAF50"),
-    "connecting":   ("◌ USB  Connecting",   "#FF9800"),
-    "disconnected": ("○ USB  Disconnected", "#f44336"),
-}
-WIFI_WIDEST_TEXT = "WiFi ▂▄▆█ 100%"
-
 HEARTBEAT_FILE = "heartbeat.txt"
 HEARTBEAT_MIN_INTERVAL_S = 5.0  # throttle disk writes to spare the SD card
 
-# Tappable point card: normal / active (checked) / pressed states. Sized for
-# fingertips on the touch panel.
-POINT_CARD_QSS = """
-QPushButton {
-    background-color: #eceff1;
-    border: 2px solid #b0bec5;
-    border-radius: 10px;
-    padding: 6px 4px;
-    color: #37474f;
-    font-size: 15px;
+# USB status chip: state -> (i18n key, style state).
+USB_STATES = {
+    "connected":    ("usb_connected",    "ok"),
+    "connecting":   ("usb_connecting",   "warn"),
+    "disconnected": ("usb_disconnected", "bad"),
 }
-QPushButton:checked {
-    background-color: #e0f7fa;
-    border: 3px solid #00acc1;
-    color: #006064;
-    font-weight: bold;
-}
-QPushButton:pressed { background-color: #b2ebf2; }
-"""
+
+
+def show_message(parent, icon, title, text):
+    """QMessageBox with a translated OK button (Qt's own is always English)."""
+    box = QMessageBox(icon, title, text, QMessageBox.StandardButton.NoButton, parent)
+    box.addButton(tr("ok"), QMessageBox.ButtonRole.AcceptRole)
+    box.exec()
+
+
+def ask_yes_no(parent, title, text):
+    """Yes/No question with translated buttons. Returns True for Yes."""
+    box = QMessageBox(QMessageBox.Icon.Question, title, text,
+                      QMessageBox.StandardButton.NoButton, parent)
+    yes = box.addButton(tr("yes"), QMessageBox.ButtonRole.YesRole)
+    box.addButton(tr("no"), QMessageBox.ButtonRole.NoRole)
+    box.exec()
+    return box.clickedButton() is yes
+
+
+def read_config_language():
+    """Language saved in the config file (Thai when missing/unreadable)."""
+    try:
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, 'r') as f:
+                return json.load(f).get("language", DEFAULT_LANGUAGE)
+    except Exception:
+        pass
+    return DEFAULT_LANGUAGE
+
+
+def ui_scale():
+    """Layout scale vs. the 1280x800 design size (1.0 on the 10.1" panel).
+
+    Uses the whole screen, not availableGeometry(): the kiosk window is full
+    screen, and the available area shrinks while the desktop panel or the
+    on-screen keyboard (squeekboard) is showing — starting then built the whole
+    UI at 2/3 size."""
+    screen = QApplication.primaryScreen().geometry()
+    return min(screen.width() / 1280.0, screen.height() / 800.0, 1.0)
+
+
+def enable_touch_scroll(area):
+    """Drag-to-scroll with kinetic flick for a scroll area on the touch panel.
+    LeftMouseButtonGesture also covers touch, which xcb delivers as mouse."""
+    QScroller.grabGesture(area.viewport(), QScroller.ScrollerGestureType.LeftMouseButtonGesture)
+
 
 # AIM Code 39 Extended escape sequences (see barcodereader.md)
 AIM_MAP = {
@@ -152,20 +182,29 @@ def decode_barcode(raw):
     return result.strip()
 
 
-def decode_model_text(raw):
-    """Unified decode for all barcode / manual-entry formats.
+IGNORED_SCAN_PREFIXES = ("https://", "http://", "www.", "ppdb.tisi.go.th")
 
-    Priority:
-    1. Dollar-delimited  — PREFIX$[id]MODEL$SUFFIX  (label-printer format)
-    2. AIM Code 39 Extended — /X escape sequences   (USB HID scanner format)
-    3. Plain text — returned as-is after strip
 
-    Shared by the main window and the spec-editor dialog so barcode input is
-    cleansed the same way everywhere.
-    """
-    raw = raw.strip()
-    if not raw:
-        return ''
+def is_ignored_scan(text):
+    """True for scanned text that must never be used as a model name: URLs
+    such as the TISI QR code on the product label ("https://ppdb.tisi.go.th/...")
+    or anything longer than the DB Model column accepts."""
+    t = (text or "").strip().lower()
+    if not t:
+        return False
+    # Scanners sometimes drop/mangle characters ("ttps:/ ppdb.tisi.go.th..."),
+    # so match the URL markers anywhere, not only at the start.
+    if (t.startswith(IGNORED_SCAN_PREFIXES) or ":/" in t
+            or "tisi.go.th" in t or "ppdb." in t):
+        return True
+    # e.g. a scan that came through as 35 backticks: it sat at the head of the
+    # upload queue and blocked ~2900 readings (2026-10).
+    if not any(ch.isalnum() for ch in t):
+        return True
+    return len(t) > MODEL_MAX_LEN
+
+
+def _decode_model_raw(raw):
     if '$' in raw:
         first = raw.find('$')
         after = raw[first + 1:]
@@ -180,18 +219,28 @@ def decode_model_text(raw):
     return raw
 
 
-def model_name_problem(name):
-    """Why a model name can't be used, or None. Catches garbage before any
-    reading is recorded with it: a 35-backtick 'model' once sat at the head of
-    the upload queue and blocked ~2900 readings, since the DB refused it."""
-    if not name:
-        return "model name is empty"
-    if not any(ch.isalnum() for ch in name):
-        return f"'{name}' has no letters or digits"
-    if len(name) > MODEL_MAX_LEN:
-        return (f"model name is {len(name)} characters — the database "
-                f"allows at most {MODEL_MAX_LEN}")
-    return None
+def decode_model_text(raw):
+    """Unified decode for all barcode / manual-entry formats.
+
+    Priority:
+    1. Dollar-delimited  — PREFIX$[id]MODEL$SUFFIX  (label-printer format)
+    2. AIM Code 39 Extended — /X escape sequences   (USB HID scanner format)
+    3. Plain text — returned as-is after strip
+
+    Returns '' for text that is not a model name (a URL / QR link, or longer
+    than MODEL_MAX_LEN) so it is ignored instead of being saved as the model —
+    otherwise every reading under it is rejected by the DB.
+
+    Shared by the main window and the spec-editor dialog so barcode input is
+    cleansed the same way everywhere.
+    """
+    raw = (raw or "").strip()
+    if not raw:
+        return ''
+    decoded = _decode_model_raw(raw)
+    if is_ignored_scan(decoded):
+        return ''
+    return decoded
 
 
 class AutoDetectThread(QThread):
@@ -200,9 +249,9 @@ class AutoDetectThread(QThread):
 
     def __init__(self, exclude_ports=()):
         super().__init__()
-        # Never probe these (e.g. the RS485 temperature sensor): writing *IDN?
-        # onto that bus would corrupt its Modbus traffic. Compared by real path
-        # so aliases like /dev/serial0 -> /dev/ttyAMA0 are caught too.
+        # Never probe these (the RS485 temperature sensor): writing *IDN? onto
+        # that bus would corrupt its Modbus traffic. Compared by real path so
+        # aliases like /dev/serial0 -> /dev/ttyAMA0 are caught too.
         self.exclude = {os.path.realpath(p) for p in exclude_ports if p}
 
     def run(self):
@@ -292,49 +341,64 @@ class ModelSpecDialog(QDialog):
 
     def __init__(self, model="", points=None, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Register / Edit Model Spec")
+        self.setWindowTitle(tr("spec_title"))
+        self.setObjectName("SpecDialog")   # scopes the input/button styles
         self.setModal(True)
         self._rows = []          # [{widget, seq, name, lower, upper}, ...]
         self._result = None
         self._scan_fields = []   # text fields that cleanse scanned barcodes
+        scale = ui_scale()
+        self._px = lambda v: max(1, round(v * scale))
+        px = self._px
 
         outer = QVBoxLayout(self)
+        outer.setContentsMargins(px(20), px(16), px(20), px(16))
+        outer.setSpacing(px(12))
 
-        outer.addWidget(QLabel("Model name  (type or scan barcode)"))
+        outer.addWidget(self._caption(tr("spec_model_caption")))
         self.model_edit = QLineEdit(model)
-        self.model_edit.setPlaceholderText("e.g. 750X — or scan the part barcode")
+        self.model_edit.setPlaceholderText(tr("spec_model_placeholder"))
         self.model_edit.setMaxLength(100)
         self._register_scan_field(self.model_edit)
         outer.addWidget(self.model_edit)
 
         hdr = QHBoxLayout()
-        hdr.addWidget(QLabel("Measurement points (probed in this order)"))
+        hdr.addWidget(self._caption(tr("spec_points_caption")))
         hdr.addStretch(1)
-        self.add_btn = QPushButton("＋ Add point")
+        self.add_btn = QPushButton(tr("spec_add_point"))
+        self.add_btn.setProperty("role", "dlg")
         self.add_btn.clicked.connect(lambda: (self._add_row(), None)[1])
         hdr.addWidget(self.add_btn)
         outer.addLayout(hdr)
 
         self.rows_container = QWidget()
+        self.rows_container.setObjectName("rows_container")
         self.rows_layout = QVBoxLayout(self.rows_container)
-        self.rows_layout.setContentsMargins(0, 0, 0, 0)
+        self.rows_layout.setContentsMargins(0, 0, px(8), 0)
+        self.rows_layout.setSpacing(px(10))
         self.rows_layout.addStretch(1)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setWidget(self.rows_container)
-        scroll.setMinimumHeight(230)
-        outer.addWidget(scroll, 1)
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setWidget(self.rows_container)
+        self.scroll.setMinimumHeight(px(300))
+        enable_touch_scroll(self.scroll)
+        outer.addWidget(self.scroll, 1)
 
         self.err_label = QLabel("")
         self.err_label.setWordWrap(True)
-        self.err_label.setStyleSheet("color: #f44336; font-weight: bold;")
+        self.err_label.setStyleSheet(
+            f"color: {UI_COLORS['fail']}; font-weight: bold; font-size: {px(18)}px;")
         outer.addWidget(self.err_label)
 
         btns = QHBoxLayout()
-        cancel = QPushButton("Cancel")
+        cancel = QPushButton(tr("cancel"))
+        cancel.setProperty("role", "dlg")
         cancel.setAutoDefault(False)
         cancel.clicked.connect(self.reject)
-        save = QPushButton("Save to DB")
+        save = QPushButton(tr("spec_save"))
+        save.setProperty("role", "primary")
+        for b in (cancel, save):
+            b.setMinimumSize(px(200), px(64))
         # Not the default button: a barcode scan ends with Enter, and we must not
         # let that trailing Enter submit the dialog — it only cleanses the field.
         save.setAutoDefault(False)
@@ -350,15 +414,26 @@ class ModelSpecDialog(QDialog):
         else:
             self._add_row()
 
-        self.resize(580, 500)
+        # Most of the 1280x800 screen: rows stay finger-sized, ~5 visible at once.
+        self.resize(px(1080), px(700))
+
+    @staticmethod
+    def _caption(text):
+        lbl = QLabel(text)
+        lbl.setProperty("role", "caption")
+        return lbl
 
     def _add_row(self, name="", lower=None, upper=None):
+        px = self._px
         row_w = QWidget()
         h = QHBoxLayout(row_w)
         h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(px(10))
 
         seq_lbl = QLabel(str(len(self._rows) + 1))
-        seq_lbl.setFixedWidth(24)
+        seq_lbl.setFixedWidth(px(36))
+        seq_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        seq_lbl.setStyleSheet(f"font-size: {px(22)}px; font-weight: bold; color: {UI_COLORS['accent_hi']};")
         name_edit = QLineEdit(name)
         name_edit.setPlaceholderText("A-B")
         name_edit.setMaxLength(50)
@@ -370,20 +445,26 @@ class ModelSpecDialog(QDialog):
             sp.setRange(0.0, 9999.0)
             sp.setDecimals(SPEC_DECIMALS)
             sp.setSingleStep(0.01)
-            sp.lineEdit().installEventFilter(self)  # tap opens numpad
+            # Tap opens the numpad; spin arrows are too small to hit by finger.
+            sp.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+            sp.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            sp.setSuffix(" Ω")
+            sp.setFixedWidth(px(180))
+            sp.lineEdit().installEventFilter(self)
         if lower is not None:
             lower_spin.setValue(float(lower))
         if upper is not None:
             upper_spin.setValue(float(upper))
 
         rm_btn = QPushButton("✕")
-        rm_btn.setFixedWidth(40)
+        rm_btn.setProperty("role", "danger")
+        rm_btn.setFixedSize(px(64), px(56))
 
         h.addWidget(seq_lbl)
         h.addWidget(name_edit, 1)
-        h.addWidget(QLabel("L"))
+        h.addWidget(self._caption(tr("spec_lower")))
         h.addWidget(lower_spin)
-        h.addWidget(QLabel("U"))
+        h.addWidget(self._caption(tr("spec_upper")))
         h.addWidget(upper_spin)
         h.addWidget(rm_btn)
 
@@ -393,6 +474,7 @@ class ModelSpecDialog(QDialog):
                "lower": lower_spin, "upper": upper_spin}
         self._rows.append(rec)
         rm_btn.clicked.connect(lambda: self._remove_row(rec))
+        QTimer.singleShot(0, lambda: self.scroll.ensureWidgetVisible(row_w))
 
     def _remove_row(self, rec):
         if rec["name"] in self._scan_fields:
@@ -425,10 +507,10 @@ class ModelSpecDialog(QDialog):
         if et == QEvent.Type.MouseButtonPress:
             for rec in self._rows:
                 if source is rec["lower"].lineEdit():
-                    self._numpad(rec["lower"], "Lower Ω")
+                    self._numpad(rec["lower"], tr("title_lower_short"))
                     return True
                 if source is rec["upper"].lineEdit():
-                    self._numpad(rec["upper"], "Upper Ω")
+                    self._numpad(rec["upper"], tr("title_upper_short"))
                     return True
             if source in self._scan_fields:
                 self._keyboard(source)
@@ -440,7 +522,7 @@ class ModelSpecDialog(QDialog):
 
     def _keyboard(self, line_edit):
         """Tap a text field → on-screen keyboard (scanner input works too)."""
-        title = "Model name" if line_edit is self.model_edit else "Point name"
+        title = tr("title_model_name") if line_edit is self.model_edit else tr("title_point_name")
         dlg = KeyboardDialog(
             current_text=line_edit.text(), title=title,
             max_length=line_edit.maxLength(), parent=self,
@@ -461,25 +543,22 @@ class ModelSpecDialog(QDialog):
         """Return (model, points, error). error is None when valid."""
         model = self.model_edit.text().strip()
         if not model:
-            return None, None, "model name is required"
-        problem = model_name_problem(model)
-        if problem:
-            return None, None, problem
+            return None, None, tr("err_model_required")
         if not self._rows:
-            return None, None, "add at least one measurement point"
+            return None, None, tr("err_add_point")
         points = []
         seen = set()
         for i, rec in enumerate(self._rows, start=1):
             name = rec["name"].text().strip()
             if not name:
-                return None, None, f"point {i}: name is required"
+                return None, None, tr("err_point_name", i=i)
             if name.lower() in seen:
-                return None, None, f"point {i}: duplicate name '{name}'"
+                return None, None, tr("err_point_dup", i=i, name=name)
             seen.add(name.lower())
             lo = rec["lower"].value()
             up = rec["upper"].value()
             if lo >= up:
-                return None, None, f"point {i} ({name}): lower must be < upper"
+                return None, None, tr("err_lower_upper", i=i, name=name)
             points.append({"name": name, "lower": round(lo, SPEC_DECIMALS),
                            "upper": round(up, SPEC_DECIMALS)})
         return model, points, None
@@ -600,6 +679,61 @@ class WiFiWorkerThread(QThread):
         self._running = False
 
 
+class NgReconfirmDialog(QDialog):
+    """Non-modal NG alarm: the operator re-measures the point (readings keep
+    flowing) or presses Confirm NG. Frameless and placed explicitly before it
+    is shown, so touch taps land where they look (see keyboard_dialog)."""
+    confirm_clicked = Signal()
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setObjectName("NgReconfirmDialog")
+        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint
+                            | Qt.WindowType.WindowStaysOnTopHint)
+        self.setModal(False)
+        # Don't steal focus: the barcode scanner types into the main window.
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        scale = ui_scale()
+        px = lambda v: max(1, round(v * scale))
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(px(28), px(20), px(28), px(20))
+        lay.setSpacing(px(10))
+        self.title = QLabel()
+        self.title.setObjectName("ng_title")
+        self.value = QLabel()
+        self.value.setObjectName("ng_value")
+        self.count = QLabel()
+        self.count.setObjectName("ng_count")
+        self.hint = QLabel()
+        self.hint.setObjectName("ng_hint")
+        self.hint.setWordWrap(True)
+        for w in (self.title, self.value, self.count, self.hint):
+            w.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lay.addWidget(w)
+        self.btn_confirm = QPushButton()
+        self.btn_confirm.setProperty("role", "danger")
+        self.btn_confirm.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.btn_confirm.setMinimumHeight(px(72))
+        self.btn_confirm.clicked.connect(self.confirm_clicked)
+        lay.addWidget(self.btn_confirm)
+        self.setFixedWidth(px(620))
+
+    def show_state(self, name, value_text, lo, hi, n, max_n):
+        self.title.setText(tr("ng_title", name=name) if name else tr("ng_title_single"))
+        self.value.setText(f"{value_text} Ω   ({lo:.{SPEC_DECIMALS}f} – {hi:.{SPEC_DECIMALS}f})")
+        self.count.setText(tr("ng_count", n=n, max=max_n))
+        self.hint.setText(tr("ng_hint", max=max_n))
+        self.btn_confirm.setText(tr("btn_confirm_ng"))
+        self.adjustSize()
+        if not self.isVisible():
+            area = self.parentWidget().window().geometry()
+            c = area.center()
+            self.move(c.x() - self.width() // 2, c.y() - self.height() // 2)
+            self.show()
+        self.raise_()
+
+
 class MainWindow(QDialog):
     def __init__(self):
         super().__init__()
@@ -611,6 +745,7 @@ class MainWindow(QDialog):
         # signals are emitted from a plain threading.Thread (not QThread).
         self.upload_signals.upload_complete.connect(self.on_upload_complete, Qt.ConnectionType.QueuedConnection)
         self.upload_signals.retry_complete.connect(self.on_retry_complete, Qt.ConnectionType.QueuedConnection)
+        self.upload_signals.upload_rejected.connect(self.on_upload_rejected, Qt.ConnectionType.QueuedConnection)
 
         self.upload_signals.spec_flush_complete.connect(
             self.on_spec_flush_complete, Qt.ConnectionType.QueuedConnection)
@@ -631,9 +766,25 @@ class MainWindow(QDialog):
         # over-range/OL). True = keep showing the last reading (default, as
         # before); False = release the display to 0. Persisted in config.
         self.hold_previous = True
+        # What the measured panel currently shows, so standby can keep it on
+        # screen dimmed (hold mode) against the range it was judged on.
+        self._display_value = None
+        self._display_range = (None, None)
+        self._recorded_at = 0.0   # when the shown value was recorded (Release timer)
+        self.waiting_delay_s = WAITING_DELAY_DEFAULT_S   # operator setting (numpad)
+        self.ng_reconfirm_max = NG_RECONFIRM_DEFAULT_MAX
+        # NG being reconfirmed: {index, point, value, value_text, n, lo, hi,
+        # result_text, time_str}, or None. Nothing is uploaded until confirmed.
+        self._reconfirm = None
+        self.ng_dialog = None
+        # Last result per point index {i: (pass, value_text)}, kept across
+        # sequence wraps until that point is measured again (cleared on model
+        # / spec change).
+        self.point_results = {}
+        self._blink_on = False
 
         # Temperature correction: per-model settings (models[m]["tc"]) plus the
-        # latest ambient temperature from the RS485 sensor.
+        # latest object temperature from the RS485 sensor.
         self.tc = default_tc_settings()
         self.tc_x_is_temp = True          # chart axis pref (global)
         self.temp_sensor_cfg = dict(TEMP_SENSOR_DEFAULTS)
@@ -641,8 +792,9 @@ class MainWindow(QDialog):
         self.last_temp = None
         self.last_temp_ts = 0.0
         self._last_temp_error = ""
-        self._measure_title = None
+        self._temp_sensor_status = "starting"
         self._tc_hist_date = None   # date of the CSV the histogram was loaded from
+        self._point_index_base = ""
 
         # Multi-point spec sequence for the current model. Empty list == the
         # legacy single-range behaviour (self.lower_limit / self.upper_limit).
@@ -685,12 +837,6 @@ class MainWindow(QDialog):
         self.detect_retry_timer = QTimer(self)
         self.detect_retry_timer.setSingleShot(True)
         self.detect_retry_timer.timeout.connect(self.start_auto_detect)
-        # Judgement → WAITING once the display is 0 and the last result has
-        # been visible for JUDGE_MIN_SHOW_S.
-        self._judged_at = 0.0
-        self.waiting_timer = QTimer(self)
-        self.waiting_timer.setSingleShot(True)
-        self.waiting_timer.timeout.connect(self._show_waiting)
         self.retry_upload_timer = QTimer(self)
         self.retry_upload_timer.setSingleShot(False)
         self.retry_upload_timer.timeout.connect(self.retry_pending_uploads)
@@ -711,395 +857,270 @@ class MainWindow(QDialog):
         self.run_schema_check()
 
     def init_ui(self):
-        self.ui = Ui_Dialog()
-        self.ui.setupUi(self)
+        scale = ui_scale()
+        # Language first so the very first paint is already in it.
+        set_language(read_config_language())
+        # App-wide so the dialogs and QMessageBoxes get the same touch sizing.
+        QApplication.instance().setStyleSheet(build_qss(scale))
+        self.ui = Ui_Dialog(scale)
+        # Two screens: 0 = QC (MSW layout), 1 = Temperature Correction.
+        self.stack = QStackedWidget(self)
+        self.page_qc = QWidget()
+        self.ui.setupUi(self.page_qc)
+        self.stack.addWidget(self.page_qc)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.addWidget(self.stack)
         self.setWindowTitle("HIOKI Auto Hold Mode (Mode 5)")
-        self._apply_ui_scale()
+        self._build_tc_page(scale)
 
-        # Configure spinboxes for limits
-        self.ui.doubleSpinBox_lowerLimit.setRange(0.01, 9999.0)
-        self.ui.doubleSpinBox_lowerLimit.setDecimals(SPEC_DECIMALS)
-        self.ui.doubleSpinBox_lowerLimit.setSingleStep(0.01)
-        self.ui.doubleSpinBox_lowerLimit.setValue(self.lower_limit)
-        self.ui.doubleSpinBox_lowerLimit.valueChanged.connect(self.on_limit_changed)
+        # Limit tiles: tap to edit in single-range mode; locked while a point
+        # sequence drives them (see _refresh_limits_ui).
+        self.ui.btn_upper.clicked.connect(lambda: self._edit_limit("upper"))
+        self.ui.btn_lower.clicked.connect(lambda: self._edit_limit("lower"))
 
-        self.ui.doubleSpinBox_UpperLimit.setRange(0.01, 9999.0)
-        self.ui.doubleSpinBox_UpperLimit.setDecimals(SPEC_DECIMALS)
-        self.ui.doubleSpinBox_UpperLimit.setSingleStep(0.01)
-        self.ui.doubleSpinBox_UpperLimit.setValue(self.upper_limit)
-        self.ui.doubleSpinBox_UpperLimit.valueChanged.connect(self.on_limit_changed)
-
-        # Open numpad on click for limit spinboxes
-        self.ui.doubleSpinBox_UpperLimit.lineEdit().installEventFilter(self)
-        self.ui.doubleSpinBox_lowerLimit.lineEdit().installEventFilter(self)
-
-        # Measurement display is read-only
-        self.ui.doubleSpinBox_Measure.setReadOnly(True)
-        self.ui.doubleSpinBox_Measure.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
-
-        # Logger model for list view
-        self.log_model = QStringListModel()
-        self.ui.listView_logger.setModel(self.log_model)
-
-        # Button for model input
+        enable_touch_scroll(self.ui.textBrowser_log)
+        enable_touch_scroll(self.ui.point_cards_area)
         self.ui.pushButton_model.clicked.connect(self.on_model_clicked)
+        self.ui.btn_lang_th.clicked.connect(lambda: self._on_lang_clicked("th"))
+        self.ui.btn_lang_en.clicked.connect(lambda: self._on_lang_clicked("en"))
 
-        # Judgement button used as status indicator
-        self.ui.pushButton_Judgement.setEnabled(False)
-
-        # Point-sequence cards: one tappable card per point, sitting between the
-        # measured value and the judgement. Tapping a card jumps straight to that
-        # point — this replaces the old Prev/Next stepping buttons.
-        self.point_cards_row = QHBoxLayout()
+        # Point-sequence cards: one tappable card per point. Tapping a card jumps
+        # straight to that point. point_results ({index: (pass, value_text)})
+        # keeps each point's last value + colour until it is measured again.
+        self.point_cards_row = self.ui.point_cards_row
         self.point_cards = []
-        self.ui.verticalLayout.insertLayout(2, self.point_cards_row)
 
-        # Remaining controls (added programmatically so the generated UI file
-        # stays untouched). Reset needs an active sequence; Edit Spec never does.
-        # The row lives in a container that stays hidden until the ⚙ settings
-        # button (always visible, right end) is tapped.
-        self.point_button_box = QWidget()
-        self.point_button_row = QHBoxLayout(self.point_button_box)
-        self.point_button_row.setContentsMargins(0, 0, 0, 0)
-        self.btn_reset_point = QPushButton("⟲ Reset to first point")
-        self.btn_new_model = QPushButton("＋ New Model")
-        self.btn_edit_spec = QPushButton("✎ Edit Spec")
+        self.btn_reset_point = self.ui.btn_reset_point
+        self.btn_new_model = self.ui.btn_new_model
+        self.btn_edit_spec = self.ui.btn_edit_spec
         # Force-uploads pending_uploads.json now, skipping the retry timer/backoff.
-        self.btn_upload_now = QPushButton("⬆ Upload Now")
+        self.btn_upload_now = self.ui.btn_upload_now
         # Toggle: hold the last reading vs. release the display to 0 in standby.
-        self.btn_hold_toggle = QPushButton()
-        self.btn_hold_toggle.setCheckable(True)
-        for b in (self.btn_reset_point, self.btn_new_model,
-                  self.btn_edit_spec, self.btn_upload_now, self.btn_hold_toggle):
-            b.setMinimumHeight(48)
-            # Let long labels shrink rather than push the window past the screen.
-            b.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-            self.point_button_row.addWidget(b)
-        self.btn_settings = QPushButton("⚙")
-        self.btn_settings.setCheckable(True)
-        self.btn_settings.setToolTip("Show / hide settings buttons")
-        self.btn_settings.toggled.connect(self.point_button_box.setVisible)
-        self.point_button_box.setVisible(False)
-        # ⚙ sits on the PASS/FAIL box's bottom-right corner: both share one grid
-        # cell. (Not a child of the judgement button — that one is disabled, and
-        # a disabled parent would disable the gear too.)
-        judge_lay = self.ui.groupBox_Judge.layout()
-        judge_lay.removeWidget(self.ui.pushButton_Judgement)
-        judge_grid = QGridLayout()
-        judge_grid.addWidget(self.ui.pushButton_Judgement, 0, 0)
-        judge_grid.addWidget(self.btn_settings, 0, 0,
-                             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom)
-        judge_lay.insertLayout(0, judge_grid)
-        self.btn_settings.raise_()
-        judge_lay.addWidget(self.point_button_box)
+        self.btn_hold_toggle = self.ui.btn_hold_toggle
         self.btn_reset_point.clicked.connect(self.on_reset_point)
         self.btn_new_model.clicked.connect(self.on_new_model_clicked)
         self.btn_edit_spec.clicked.connect(self.on_edit_spec_clicked)
         self.btn_upload_now.clicked.connect(self.on_upload_now_clicked)
         self.btn_hold_toggle.toggled.connect(self.on_hold_toggle)
         self._apply_hold_toggle_ui()   # reflect the (default) hold_previous state
-
-        # Temperature Correction tab (QC Panel tab comes from the generated UI).
-        self.tc_tab = TempCorrectionTab(self)
-        self.ui.tabWidget.addTab(self.tc_tab, "Temperature Correction")
-        self.tc_tab.settings_changed.connect(self.on_tc_settings_changed)
-        self.tc_tab.axis_changed.connect(self.on_tc_axis_changed)
-        self._build_temp_card()
-        self._fit_to_screen()
+        # ⚙ shows/hides the tool row; waiting time; Temperature Correction screen.
+        self.ui.btn_settings.toggled.connect(self.ui.tools_widget.setVisible)
+        self.ui.btn_waiting.clicked.connect(self.on_waiting_clicked)
+        self.ui.btn_tc.clicked.connect(lambda: self.stack.setCurrentIndex(1))
+        self._apply_waiting_ui()
         self._apply_point_to_ui()  # builds cards + sets initial enabled state
+
+        # Current point card blinks (red while an NG is being reconfirmed).
+        self.blink_timer = QTimer(self)
+        self.blink_timer.timeout.connect(self._blink_tick)
+        self.blink_timer.start(BLINK_MS)
+        self.temp_chip_timer = QTimer(self)   # greys the chip once readings stop
+        self.temp_chip_timer.timeout.connect(self._update_temp_chip)
+        self.temp_chip_timer.start(200)
+        self._update_temp_chip()
+
+        # Pass/fail counters: today's readings for the current model (seeded
+        # from the daily CSV in _load_counts, then counted live).
+        self.counts = {"OK": 0, "NG": 0}
+        self._counts_key = None
+        self.reading_count = 0
+
+        self.clock_timer = QTimer(self)
+        self.clock_timer.timeout.connect(self._tick_clock)
+        self.clock_timer.start(1000)
+        self._tick_clock()
 
         # Check if there are pending uploads to retry
         pending_count = self.db_manager.get_pending_count()
         if pending_count > 0:
             self.log_event(f"Found {pending_count} pending uploads to retry")
-            self.append_log(f"! {pending_count} value(s) waiting to upload")
+            self.append_log(tr("log_pending_values", n=pending_count))
 
         pending_specs = self.spec_queue.pending_count()
         if pending_specs > 0:
             self.log_event(f"Found {pending_specs} pending spec(s) to upload")
-            self.append_log(f"! {pending_specs} model spec(s) waiting to upload")
+            self.append_log(tr("log_pending_specs", n=pending_specs))
 
         # Initialise status badges and start background WiFi monitor
+        self._db_online = None   # unknown until the first DB round-trip
         self._set_usb_status("disconnected")
+        self._refresh_db_status()
         self.wifi_thread = WiFiWorkerThread()
         self.wifi_thread.wifi_ready.connect(self._on_wifi_ready)
         self.wifi_thread.start()
 
-        self._show_waiting()   # display starts at 0 — no result yet
-
-    def _apply_ui_scale(self):
-        screen = QApplication.primaryScreen().availableGeometry()
-        scale = min(screen.width() / 1280.0, screen.height() / 800.0, 1.0)
-        self.ui_scale = scale
-
-        def sf(pt, bold=False):
-            f = QFont()
-            f.setPointSize(max(8, round(pt * scale)))
-            if bold:
-                f.setBold(True)
-                f.setWeight(QFont.Weight.Bold)
-            return f
-
-        def px(v):
-            return max(1, round(v * scale))
-
-        ui = self.ui
-        ui.groupBox_status.setFont(sf(12))
-        ui.label_usb_status.setFont(sf(13, bold=True))
-        ui.label_wifi.setFont(sf(13, bold=True))
-        # Fixed width from the longest text either card can show, so the cards
-        # (and the Model button beside them) don't jump as the status changes.
-        fm = QFontMetrics(ui.label_usb_status.font())
-        texts = [t for t, _ in USB_STATES.values()] + [WIFI_WIDEST_TEXT]
-        text_w = max(fm.horizontalAdvance(t) for t in texts)
-        # label padding 10+10, label border 2+2, card margins and frame border
-        card_w = text_w + 24 + 2 * px(4) + 6
-        for f in (ui.frame_usb, ui.frame_wifi):
-            f.setFixedWidth(card_w)
-        ui.pushButton_model.setFont(sf(25))
-        self._model_font_pt = max(8, round(25 * scale))
-        # Compact status row (~half its former ~170 px): the Model button is
-        # exactly as tall as the USB + WiFi stack, freeing height for the
-        # measured value and the judgement.
-        card_h = px(52)
-        for f in (ui.frame_usb, ui.frame_wifi):
-            f.setFixedHeight(card_h)
-            f.layout().setContentsMargins(px(4), px(2), px(4), px(2))
-        ui.pushButton_model.setMinimumHeight(0)
-        ui.pushButton_model.setFixedHeight(2 * card_h + ui.statusCardsLayout.spacing())
-        # Ignored width: a long model name shrinks/elides to fit (see
-        # _fit_model_text) instead of widening the window past the screen.
-        ui.pushButton_model.setSizePolicy(QSizePolicy.Policy.Ignored,
-                                          QSizePolicy.Policy.Fixed)
-        ui.horizontalLayout_2.setContentsMargins(px(6), px(4), px(6), px(4))
-        # The status box keeps its compact height; spare height goes to the
-        # measured value and the judgement instead.
-        ui.groupBox_status.setSizePolicy(QSizePolicy.Policy.Preferred,
-                                         QSizePolicy.Policy.Maximum)
-        ui.verticalLayout.setStretchFactor(ui.groupBox_Resistance, 3)
-        ui.verticalLayout.setStretchFactor(ui.groupBox_Judge, 2)
-        ui.pushButton_Judgement.setSizePolicy(QSizePolicy.Policy.Preferred,
-                                              QSizePolicy.Policy.Expanding)
-
-        ui.groupBox_Resistance.setFont(sf(12))
-        # Smaller title: at 24 pt the long point + TC title alone was ~680 px wide.
-        ui.groupBox_MeasureValue.setFont(sf(16, bold=True))
-        ui.doubleSpinBox_Measure.setFont(sf(90, bold=True))   # +25%
-
-        ui.groupBox_UpperLimit.setFont(sf(18))
-        ui.doubleSpinBox_UpperLimit.setFont(sf(30))
-        ui.groupBox_LowerLimit.setFont(sf(18))
-        ui.doubleSpinBox_lowerLimit.setFont(sf(30))
-
-        ui.groupBox_Judge.setFont(sf(12))
-        ui.pushButton_Judgement.setFont(sf(60))   # +25%
-
-        ui.groupBox.setFont(sf(12))
-        ui.groupBox.setMinimumWidth(px(220))
-
-    def _px(self, v):
-        return max(1, round(v * self.ui_scale))
-
-    def _fit_to_screen(self):
-        """Scale the widgets added in code, then pin the window to the screen.
-
-        At 1024x768 the unscaled TC tab, button row and tab bar made the window
-        ~1185 px wide, pushing the Data Log off the right edge."""
-        scale, px = self.ui_scale, self._px
-        self.ui.tabWidget.tabBar().setStyleSheet(
-            f"QTabBar::tab{{min-height:{px(44)}px;min-width:{px(220)}px;"
-            f"padding:{px(6)}px {px(18)}px;font-size:{max(8, round(15 * scale))}pt;}}")
-        for b in (self.btn_reset_point, self.btn_new_model,
-                  self.btn_edit_spec, self.btn_upload_now, self.btn_hold_toggle):
-            f = b.font()
-            f.setPointSize(max(8, round(13 * scale)))
-            b.setFont(f)
-            b.setMinimumHeight(px(48))
-        gf = self.btn_settings.font()
-        gf.setPointSize(max(8, round(22 * scale)))
-        self.btn_settings.setFont(gf)
-        self.btn_settings.setFixedSize(px(64), px(48))
-        self.tc_tab.apply_scale(scale)
-
-        # Safeguards against variable text widening the window off-screen:
-        # these widgets take the width the layout gives them (their text is
-        # fitted/elided or clipped), and the window's minimum size is no longer
-        # forced up to the content's — so _snap_to_screen can always win.
-        ui = self.ui
-        ui.groupBox_MeasureValue.setSizePolicy(QSizePolicy.Policy.Ignored,
-                                               QSizePolicy.Policy.Preferred)
-        self.tc_tab.model_label.setSizePolicy(QSizePolicy.Policy.Ignored,
-                                              QSizePolicy.Policy.Preferred)
-        ui.mainLayout.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
-        ui.pushButton_model.installEventFilter(self)
-        ui.groupBox_MeasureValue.installEventFilter(self)
-
-        screen = QApplication.primaryScreen()
-        geo = screen.availableGeometry()
-        self.setGeometry(geo)
-        self.log_event(f"Screen {screen.geometry().width()}x{screen.geometry().height()}, "
-                       f"UI scale {scale:.2f}")
-        need = self.minimumSizeHint()
-        if need.width() > geo.width() or need.height() > geo.height():
-            self.log_event(f"UI needs {need.width()}x{need.height()}, larger than the "
-                           f"screen {geo.width()}x{geo.height()}")
-
-    # ── Object-temperature card (top of the right column, above the Data Log) ────
-
-    def _build_temp_card(self):
-        ui, scale = self.ui, self.ui_scale
-        self.temp_card = QFrame()
-        self.temp_card.setFrameShape(QFrame.Shape.StyledPanel)
-        self.temp_card.setSizePolicy(QSizePolicy.Policy.Preferred,
-                                     QSizePolicy.Policy.Fixed)
-        self.temp_card.setFixedHeight(self._px(110))
-        lay = QVBoxLayout(self.temp_card)
-        lay.setContentsMargins(8, 2, 8, 2)
-        lay.setSpacing(0)
-        self.temp_card_title = QLabel("Object Temperature")
-        self.temp_card_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        tf = QFont()
-        tf.setPointSize(max(8, round(11 * scale)))
-        self.temp_card_title.setFont(tf)
-        self.temp_card_value = QLabel("-- °C")
-        self.temp_card_value.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        vf = QFont()
-        vf.setPointSize(max(8, round(25 * scale)))
-        vf.setBold(True)
-        self.temp_card_value.setFont(vf)
-        lay.addWidget(self.temp_card_title)
-        lay.addWidget(self.temp_card_value, 1)
-        # Right column: temperature card on top, Data Log below it.
-        ui.mainLayout.removeWidget(ui.groupBox)
-        right_col = QVBoxLayout()
-        right_col.addWidget(self.temp_card)
-        right_col.addWidget(ui.groupBox, 1)
-        ui.mainLayout.addLayout(right_col, 1)
-
-        self._temp_sensor_status = "starting"
-        self.temp_card_timer = QTimer(self)   # greys the card once readings stop
-        self.temp_card_timer.timeout.connect(self._update_temp_card)
-        self.temp_card_timer.start(200)   # same pace as the sensor poll
-        self._update_temp_card()
-
-    def _on_temp_sensor_status(self, text):
-        self._temp_sensor_status = text
-        self._update_temp_card()
-
-    def _update_temp_card(self):
-        if self._temp_is_fresh():
-            color = "#4CAF50"
-            self.temp_card_value.setText(f"{self.last_temp:.1f} °C")
-            self.temp_card_title.setText("🌡 Object Temperature")
-        else:
-            color = "#888888"
-            self.temp_card_value.setText("-- °C")
-            self.temp_card_title.setText(f"🌡 {self._temp_sensor_status}"
-                                         if self.last_temp is None
-                                         else "🌡 stale / no reading")
-        self.temp_card.setStyleSheet(
-            f"QFrame{{border:2px solid {color};border-radius:6px;}}"
-            f"QLabel{{border:none;color:{color};}}")
-
-    def _set_model_text(self, text):
-        self._model_text = text if text else "Model"
-        self._fit_model_text()
-
-    def _fit_model_text(self):
-        """Show the model name as large as fits the button: shrink the font
-        (down to 10 pt), then elide the middle as a last resort."""
-        btn = self.ui.pushButton_model
-        text = getattr(self, "_model_text", btn.text())
-        avail = max(20, btn.width() - self._px(24))
-        f = btn.font()
-        pt = getattr(self, "_model_font_pt", f.pointSize())
-        f.setPointSize(pt)
-        while pt > 10 and QFontMetrics(f).horizontalAdvance(text) > avail:
-            pt -= 1
-            f.setPointSize(pt)
-        btn.setFont(f)
-        btn.setText(QFontMetrics(f).elidedText(text, Qt.TextElideMode.ElideMiddle, avail))
-        btn.setToolTip(text)
-
-    def _apply_measure_title(self):
-        """Measured title, elided to the box width so it never widens it."""
-        box = self.ui.groupBox_MeasureValue
-        title = getattr(self, "_measure_title", "") or box.title()
-        avail = max(40, box.width() - self._px(24))
-        box.setTitle(QFontMetrics(box.font()).elidedText(
-            title, Qt.TextElideMode.ElideRight, avail))
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        # Safeguard: a window that grows past the screen never shrinks back on
-        # its own (seen once at 1086 px on the 1024 px kiosk) — snap it back.
-        # Whole screen, not availableGeometry(): the kiosk window is full screen
-        # and legitimately covers the desktop panel.
-        geo = self.screen().geometry()
-        if ((self.width() > geo.width() or self.height() > geo.height())
-                and not getattr(self, "_snap_pending", False)):
-            self._snap_pending = True
-            QTimer.singleShot(0, self._snap_to_screen)
-
-    def _snap_to_screen(self):
-        self._snap_pending = False
-        geo = self.screen().geometry()
-        if self.width() > geo.width() or self.height() > geo.height():
-            self.log_event(f"Window grew to {self.width()}x{self.height()} — "
-                           f"snapped back to the screen {geo.width()}x{geo.height()}")
-            self.setGeometry(geo)
+    def _tick_clock(self):
+        now = datetime.now()
+        self.ui.label_clock.setText(now.strftime("%H:%M"))
+        if self._counts_key and self._counts_key[1] != now.date():
+            self._load_counts()   # midnight: start the new day's counters
 
     def _set_usb_status(self, state):
-        text, color = USB_STATES.get(state, USB_STATES["disconnected"])
-        self.ui.label_usb_status.setText(text)
-        self.ui.label_usb_status.setStyleSheet(
-            f"color: {color}; font-weight: bold; "
-            f"border: 2px solid {color}; border-radius: 6px; padding: 2px 10px;"
-        )
+        self._usb_state = state
+        key, style = USB_STATES.get(state, USB_STATES["disconnected"])
+        self.ui.label_usb_status.setText(tr(key))
+        set_prop(self.ui.label_usb_status, "state", style)
+        if state != "connected":
+            self._show_reading("idle", status=tr(
+                "status_connecting" if state == "connecting" else "status_disconnected"))
+
+    # ── Language (TH default / EN) ────────────────────────────────────────────
+
+    def _on_lang_clicked(self, code):
+        if code != get_language():
+            self.apply_language(code)
+            self.log_event(f"UI language -> {code}")
+            self.save_config()
+        else:
+            self.ui.retranslate(self.reading_count)   # keep the toggle checked
+
+    def apply_language(self, code):
+        """Switch every visible text to `code` without restarting. DATA LOG
+        lines already shown stay as written; new lines use the new language."""
+        set_language(code)
+        QApplication.instance().setStyleSheet(build_qss(ui_scale()))
+        self.ui.retranslate(self.reading_count)
+        self._set_usb_status(getattr(self, "_usb_state", "disconnected"))
+        self._refresh_db_status()
+        self._apply_hold_toggle_ui()
+        self._apply_waiting_ui()
+        self._retranslate_tc_page()
+        self._apply_point_to_ui()
+        if not self.cleaned_model:
+            self.ui.label_model_name.setText(tr("model_placeholder"))
+        if self.ui.frame_verdict.property("state") == "idle":
+            self.ui.label_verdict_detail.setText(tr("verdict_no_reading_model"))
+        if self.connected:
+            state = self.ui.label_measure_value.property("state")
+            if state == "idle":
+                self._show_reading("idle", status=tr("status_ready")
+                                   + (self._probe_hint() or tr("status_probe_part")))
+            elif state == "standby":
+                self._show_waiting()
 
     def _on_wifi_ready(self, pct):
         if pct < 0:
-            self.ui.label_wifi.setText("WiFi  ---")
-            self.ui.label_wifi.setStyleSheet("color: #888; font-weight: bold;")
+            self.ui.label_wifi.setText("○ ---")
+            set_prop(self.ui.label_wifi, "state", "off")
             return
         bar_chars = "▂▄▆█"
         n = 0 if pct < 20 else 1 if pct < 40 else 2 if pct < 60 else 3 if pct < 80 else 4
         bars = ''.join(bar_chars[i] if i < n else '░' for i in range(4))
-        color = "#4CAF50" if pct >= 70 else "#FF9800" if pct >= 40 else "#f44336"
-        self.ui.label_wifi.setText(f"WiFi {bars} {pct}%")
-        self.ui.label_wifi.setStyleSheet(f"color: {color}; font-weight: bold;")
+        self.ui.label_wifi.setText(f"{bars} {pct}%")
+        set_prop(self.ui.label_wifi, "state",
+                 "ok" if pct >= 70 else "warn" if pct >= 40 else "bad")
 
-    def eventFilter(self, source, event):
-        if event.type() == QEvent.Type.Resize:
-            if source is self.ui.pushButton_model:
-                self._fit_model_text()
-            elif source is self.ui.groupBox_MeasureValue:
-                self._apply_measure_title()
-            return super().eventFilter(source, event)
-        if event.type() == QEvent.Type.MouseButtonPress:
-            # While a point sequence drives the limits they are read-only; skip
-            # the numpad so operators can't override the active point's range.
-            if source is self.ui.doubleSpinBox_UpperLimit.lineEdit():
-                if not self.ui.doubleSpinBox_UpperLimit.isReadOnly():
-                    self._show_numpad_for_spinbox(self.ui.doubleSpinBox_UpperLimit, "Upper Limit")
-                return True
-            elif source is self.ui.doubleSpinBox_lowerLimit.lineEdit():
-                if not self.ui.doubleSpinBox_lowerLimit.isReadOnly():
-                    self._show_numpad_for_spinbox(self.ui.doubleSpinBox_lowerLimit, "Lower Limit")
-                return True
-        return super().eventFilter(source, event)
+    def _refresh_db_status(self):
+        """DB chip + Upload button: reachability and how much is queued."""
+        pending = self.db_manager.get_pending_count()
+        specs = self.spec_queue.pending_count()
+        queued = pending + specs
+        if self._db_online is False:
+            text, style = (tr("db_offline_n", n=queued) if queued else tr("db_offline")), "bad"
+        elif queued:
+            text, style = tr("db_queued", n=queued), "warn"
+        elif self._db_online:
+            text, style = tr("db_online"), "ok"
+        else:
+            text, style = "◌ ---", "off"
+        self.ui.label_db.setText(text)
+        set_prop(self.ui.label_db, "state", style)
+        self.btn_upload_now.setText(tr("btn_upload_n", n=queued) if queued else tr("btn_upload_now"))
+        set_prop(self.btn_upload_now, "attention", bool(queued))
 
-    def _show_numpad_for_spinbox(self, spinbox, label):
+    def _set_db_online(self, online):
+        self._db_online = online
+        self._refresh_db_status()
+
+    def _set_model_text(self, text):
+        self._cancel_reconfirm()
+        self.point_results = {}
+        self.ui.label_model_name.setText(text if text else tr("model_placeholder"))
+        set_prop(self.ui.label_model_name, "empty", not text)
+        # A previous model's PASS/FAIL must not linger under the new name.
+        self.ui.label_verdict.setText("— — —")
+        self.ui.label_verdict_detail.setText(tr("verdict_no_reading_model"))
+        set_prop(self.ui.frame_verdict, "state", "idle")
+        self._load_counts()
+
+    def _refresh_limits_ui(self, editable):
+        """Show self.lower_limit/upper_limit on the tiles (and the gauge)."""
+        tag = tr("tag_tap_to_edit") if editable else tr("tag_locked")
+        for btn, value_lbl, tag_lbl, v in (
+                (self.ui.btn_upper, self.ui.label_upper_value, self.ui.label_upper_tag, self.upper_limit),
+                (self.ui.btn_lower, self.ui.label_lower_value, self.ui.label_lower_tag, self.lower_limit)):
+            value_lbl.setText(f"{v:.{SPEC_DECIMALS}f}")
+            tag_lbl.setText(tag)
+            set_prop(btn, "editable", editable)
+        self.ui.gauge.set_range(self.lower_limit, self.upper_limit)
+
+    def _edit_limit(self, which):
+        # While a point sequence drives the limits they are read-only; skip
+        # the numpad so operators can't override the active point's range.
+        if self.current_point() is not None:
+            self.append_log(tr("log_limits_from_spec"))
+            return
+        current = self.upper_limit if which == "upper" else self.lower_limit
         dlg = NumpadDialog(
-            current_value=spinbox.value(),
-            decimals=spinbox.decimals(),
-            title=label,
-            min_val=spinbox.minimum(),
-            max_val=spinbox.maximum(),
-            parent=self,
+            current_value=current, decimals=SPEC_DECIMALS,
+            title=tr("title_upper_limit") if which == "upper" else tr("title_lower_limit"),
+            min_val=0.01, max_val=9999.0, parent=self,
         )
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            spinbox.setValue(dlg.get_value())
+            if which == "upper":
+                self.upper_limit = dlg.get_value()
+            else:
+                self.lower_limit = dlg.get_value()
+            self.on_limit_changed()
+
+    def _show_reading(self, state, value=None, status="", lo=None, hi=None):
+        """Drive the measured-value panel.
+
+        state: idle | settling | stable | pass | fail | standby. The gauge shows
+        the value against lo/hi (default: the active limits) so a recorded
+        reading stays drawn against the range it was judged on even after the
+        sequence has advanced to the next point.
+        """
+        lbl = self.ui.label_measure_value
+        if value is None:
+            lbl.setText("-.---")
+        else:
+            try:
+                lbl.setText(f"{float(value):.3f}")
+            except (TypeError, ValueError):
+                lbl.setText(str(value))
+        set_prop(lbl, "state", state)
+        self.ui.label_measure_status.setText(status)
+        try:
+            num = float(value) if value is not None else None
+        except (TypeError, ValueError):
+            num = None
+        # Blank rather than hide the unit so the number doesn't shift sideways.
+        self.ui.label_unit.setText("Ω" if num is not None else "")
+        self.ui.gauge.set_range(self.lower_limit if lo is None else lo,
+                                self.upper_limit if hi is None else hi)
+        self.ui.gauge.set_value(num, state)
+
+    def _show_waiting(self):
+        """Open circuit (probes lifted): show WAITING. Hold mode keeps the last
+        reading on screen, dimmed; Release mode replaces it with WAITING."""
+        status = tr("status_waiting_open") + self._probe_hint()
+        if self.hold_previous and self._display_value is not None:
+            self._show_reading("standby", self._display_value,
+                               status + tr("status_holding"), *self._display_range)
+        elif time.time() - self._recorded_at < self.waiting_delay_s:
+            return   # keep the just-recorded value readable a moment longer
+        else:
+            self._show_reading("standby", "WAITING", status)
+            if self._reconfirm is None:   # an NG under reconfirm stays on screen
+                self.ui.label_verdict.setText("WAITING")
+                self.ui.label_verdict_detail.setText(tr("status_waiting_open"))
+                set_prop(self.ui.frame_verdict, "state", "idle")
+
+    def _probe_hint(self):
+        p = self.current_point()
+        return tr("probe_hint", name=p['name']) if p else ""
 
     def start_auto_detect(self):
         if self.connected or self.detect_in_progress:
@@ -1123,6 +1144,13 @@ class MainWindow(QDialog):
                     self.cleaned_model = config.get("current_model", "")
                     self.hold_previous = config.get("hold_previous", True)
                     self.tc_x_is_temp = config.get("tc_x_is_temp", True)
+                    try:
+                        self.waiting_delay_s = min(WAITING_DELAY_MAX_S, max(0.0, float(
+                            config.get("waiting_delay_s", WAITING_DELAY_DEFAULT_S))))
+                        self.ng_reconfirm_max = max(0, int(
+                            config.get("ng_reconfirm_max", NG_RECONFIRM_DEFAULT_MAX)))
+                    except (TypeError, ValueError):
+                        pass
                     sensor = config.get("temp_sensor", {})
                     if isinstance(sensor, dict):
                         self.temp_sensor_cfg.update(
@@ -1144,10 +1172,16 @@ class MainWindow(QDialog):
             self.lower_limit = 0.0
             self.upper_limit = 1000.0
 
+        # A URL (e.g. a scanned TISI QR code) saved as the model before the
+        # scan filter existed — drop it so readings aren't rejected by the DB.
+        if is_ignored_scan(self.cleaned_model):
+            self.log_event(f"Ignoring invalid saved model '{self.cleaned_model}'")
+            self.cleaned_model = ""
+
         # Fall back to model change log when config has no model (crash / missing file)
         if not self.cleaned_model:
             recovered = self._recover_model_from_log()
-            if recovered:
+            if recovered and not is_ignored_scan(recovered):
                 self.cleaned_model = recovered
                 config_source = "recovery_log"
                 self.log_event(f"Config had no model — recovered '{recovered}' from model_changes.csv")
@@ -1160,13 +1194,9 @@ class MainWindow(QDialog):
 
         # Push loaded values into UI
         self._apply_hold_toggle_ui()
+        self._apply_waiting_ui()
         self._set_model_text(self.cleaned_model)
-        self.ui.doubleSpinBox_lowerLimit.blockSignals(True)
-        self.ui.doubleSpinBox_UpperLimit.blockSignals(True)
-        self.ui.doubleSpinBox_lowerLimit.setValue(self.lower_limit)
-        self.ui.doubleSpinBox_UpperLimit.setValue(self.upper_limit)
-        self.ui.doubleSpinBox_lowerLimit.blockSignals(False)
-        self.ui.doubleSpinBox_UpperLimit.blockSignals(False)
+        self._refresh_limits_ui(editable=True)
 
         # Load the point sequence (if any) for the startup model.
         self.load_model_spec()
@@ -1184,12 +1214,15 @@ class MainWindow(QDialog):
             # Update current model and limits
             config["current_model"] = self.cleaned_model
             config["hold_previous"] = self.hold_previous
+            config["language"] = get_language()
             config["tc_x_is_temp"] = self.tc_x_is_temp
+            config["waiting_delay_s"] = self.waiting_delay_s
+            config["ng_reconfirm_max"] = self.ng_reconfirm_max
             if "models" not in config:
                 config["models"] = {}
             if self.cleaned_model:
                 # Merge, don't replace: the model entry also holds the cached
-                # point sequence ("points") and temperature-correction ("tc").
+                # point sequence ("points") and temperature correction ("tc").
                 config["models"].setdefault(self.cleaned_model, {}).update({
                     "lower_limit": round(self.lower_limit, 3),
                     "upper_limit": round(self.upper_limit, 3)
@@ -1231,9 +1264,10 @@ class MainWindow(QDialog):
             return ""
 
     def on_limit_changed(self):
-        """Update limits when spinbox values change"""
-        self.lower_limit = self.ui.doubleSpinBox_lowerLimit.value()
-        self.upper_limit = self.ui.doubleSpinBox_UpperLimit.value()
+        """Persist and show limits after a single-range edit on the numpad."""
+        if self.lower_limit >= self.upper_limit:
+            self.append_log(tr("log_lower_not_below"))
+        self._refresh_limits_ui(editable=True)
         self.save_config()
         self._update_tc_axis()
 
@@ -1301,7 +1335,7 @@ class MainWindow(QDialog):
 
     def _prompt_model_text(self, preset=""):
         """On-screen keyboard prompt for a model name. Returns (text, ok)."""
-        dlg = KeyboardDialog(current_text=preset, title="Model name",
+        dlg = KeyboardDialog(current_text=preset, title=tr("title_model_name"),
                              max_length=100, parent=self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             return dlg.get_text(), True
@@ -1313,12 +1347,8 @@ class MainWindow(QDialog):
         if ok:
             old_model = self.cleaned_model
             cleaned = self._decode_model_text(text)
-            problem = model_name_problem(cleaned)
-            if problem:
-                self.log_event(f"Model entry refused: {problem}")
-                self.append_log(f"! Model not changed — {problem}")
-                QMessageBox.warning(self, "Invalid model name",
-                                    f"The model was not changed:\n{problem}")
+            if not cleaned and text.strip():
+                self.append_log(tr("log_model_not_changed", n=MODEL_MAX_LEN))
                 return
             self.cleaned_model = cleaned
             self._set_model_text(cleaned)
@@ -1337,12 +1367,7 @@ class MainWindow(QDialog):
                     if self.cleaned_model and self.cleaned_model in models:
                         self.lower_limit = models[self.cleaned_model].get("lower_limit", 0.0)
                         self.upper_limit = models[self.cleaned_model].get("upper_limit", 1000.0)
-                        self.ui.doubleSpinBox_lowerLimit.blockSignals(True)
-                        self.ui.doubleSpinBox_UpperLimit.blockSignals(True)
-                        self.ui.doubleSpinBox_lowerLimit.setValue(self.lower_limit)
-                        self.ui.doubleSpinBox_UpperLimit.setValue(self.upper_limit)
-                        self.ui.doubleSpinBox_lowerLimit.blockSignals(False)
-                        self.ui.doubleSpinBox_UpperLimit.blockSignals(False)
+                        self._refresh_limits_ui(editable=self.current_point() is None)
                         print(f"DEBUG: Loaded limits for model '{self.cleaned_model}': {self.lower_limit} - {self.upper_limit}")
         except Exception as e:
             print(f"Error loading model limits: {e}")
@@ -1421,230 +1446,6 @@ class MainWindow(QDialog):
         except Exception as e:
             print(f"Error caching points: {e}")
 
-    # ── Temperature correction (TC) ───────────────────────────────────────────
-
-    def _load_model_tc(self, model):
-        """Load a model's TC settings from config (defaults: OFF, 20 °C, 3930 ppm)."""
-        raw = None
-        if model:
-            try:
-                if os.path.exists(CONFIG_FILE):
-                    with open(CONFIG_FILE, 'r') as f:
-                        raw = json.load(f).get("models", {}).get(model, {}).get("tc")
-            except Exception as e:
-                print(f"Error loading TC settings: {e}")
-        self.tc = normalize_tc_settings(raw)
-        if not model:
-            self.tc["enabled"] = False   # TC is per model; nothing to apply to
-        self.tc_tab.set_model(model)
-        self.tc_tab.load_settings(self.tc["enabled"], self.tc["t0"], self.tc["alpha_ppm"])
-        self.tc_tab.set_axis_temperature_on_x(self.tc_x_is_temp)
-        self._update_measure_title()
-
-    def _save_model_tc(self, model, tc):
-        """Persist a model's TC settings (merged, like _cache_points)."""
-        try:
-            if os.path.exists(CONFIG_FILE):
-                with open(CONFIG_FILE, 'r') as f:
-                    config = json.load(f)
-            else:
-                config = {}
-            config.setdefault("models", {}).setdefault(model, {})
-            config["models"][model]["tc"] = tc
-            with open(CONFIG_FILE, 'w') as f:
-                json.dump(config, f, indent=2)
-        except Exception as e:
-            print(f"Error saving TC settings: {e}")
-
-    def on_tc_settings_changed(self, enabled, t0, alpha_ppm):
-        model = self.cleaned_model.strip()
-        if not model:
-            self.append_log("⚠ Set a model first — TC settings are saved per model")
-            self.tc_tab.load_settings(False, t0, alpha_ppm)
-            return
-        self.tc = normalize_tc_settings(
-            {"enabled": enabled, "t0": t0, "alpha_ppm": alpha_ppm})
-        self._save_model_tc(model, self.tc)
-        state = "ON" if self.tc["enabled"] else "OFF"
-        self.log_event(f"TC for '{model}': {state}, t0={self.tc['t0']:.1f} °C, "
-                       f"alpha={self.tc['alpha_ppm']} ppm/°C")
-        self.append_log(f"TC {state} — t₀ {self.tc['t0']:.1f} °C, "
-                        f"α {self.tc['alpha_ppm']} ppm/°C")
-        self._update_measure_title()
-
-    def on_tc_axis_changed(self, x_is_temp):
-        self.tc_x_is_temp = x_is_temp
-        self.save_config()
-
-    def _update_tc_axis(self):
-        """Fix the TC chart's resistance axis to the model's whole spec band, so
-        it doesn't move while the sequence auto-advances point to point."""
-        if getattr(self, "tc_tab", None) is None:
-            return  # a limit spinbox fired during startup, before the tab exists
-        if self.spec_points:
-            lo = min(p["lower"] for p in self.spec_points)
-            hi = max(p["upper"] for p in self.spec_points)
-            spec = [{"seq": p["seq"], "name": p["name"],
-                     "lower": p["lower"], "upper": p["upper"]} for p in self.spec_points]
-        else:
-            lo, hi = self.lower_limit, self.upper_limit
-            spec = [{"seq": None, "name": "All readings", "lower": lo, "upper": hi}]
-        self.tc_tab.set_spec_range(lo, hi)
-        model = self.cleaned_model.strip()
-        self.tc_tab.set_hist_spec(spec, f"Today · {model}" if model else "Today")
-
-    def _load_tc_history(self):
-        """Fill the TC-tab histogram with today's recorded values for the model.
-
-        Parsed by column position so old (pre multi-point) daily files and files
-        that mix both layouts work: Resistance and Model are columns 1 and 3 in
-        both; Point/Seq (4/5) exist only in full-width rows."""
-        if getattr(self, "tc_tab", None) is None:
-            return
-        model = self.cleaned_model.strip()
-        now = datetime.now()
-        self._tc_hist_date = now.date()
-        rows = []
-        path = self.get_daily_csv_path(now)
-        if model and os.path.exists(path):
-            try:
-                with open(path, newline="", encoding="utf-8") as f:
-                    for r in csv.reader(f):
-                        if len(r) < 4 or r[0] == "Timestamp" or r[3].strip() != model:
-                            continue
-                        try:
-                            value = float(r[1])
-                        except ValueError:
-                            continue
-                        seq = name = None
-                        if len(r) >= len(CSV_HEADERS):
-                            name = r[4] or None
-                            try:
-                                seq = int(r[5]) if r[5] != "" else None
-                            except ValueError:
-                                seq = None
-                        rows.append((seq, name, value))
-            except Exception as e:
-                self.log_event(f"Histogram: could not read {os.path.basename(path)}: {e}")
-        self.tc_tab.set_history(rows)
-
-    def _temp_is_fresh(self):
-        return (self.last_temp is not None
-                and time.time() - self.last_temp_ts <= TEMP_STALE_S)
-
-    def _tc_value(self, rt):
-        """Value to judge/record for a raw reading Rt: (value, note).
-
-        value is None when TC is ON but cannot be applied — the caller must then
-        NOT record, since a raw Rt stored in the same Resistance column would be
-        indistinguishable from a corrected one."""
-        if not self.tc["enabled"]:
-            return rt, ""
-        if not self._temp_is_fresh():
-            return None, "no fresh temperature from the sensor"
-        t0, alpha = self.tc["t0"], self.tc["alpha_ppm"]
-        rt0 = correct_resistance(rt, self.last_temp, t0, alpha)
-        if rt0 is None:
-            return None, "invalid correction (1 + α(t − t₀) ≤ 0)"
-        return rt0, f"Rt {rt:.3f} Ω @ {self.last_temp:.1f} °C → {t0:.1f} °C"
-
-    def _display_resistance(self, rt):
-        """What the big Measured number shows: Rt0 when TC applies, else Rt."""
-        if self.tc["enabled"] and self._temp_is_fresh():
-            rt0 = correct_resistance(rt, self.last_temp, self.tc["t0"], self.tc["alpha_ppm"])
-            if rt0 is not None:
-                return rt0
-        return rt
-
-    def _update_measure_title(self):
-        """Measured title = active point (if a sequence) + TC state (if on)."""
-        point = self.current_point()
-        if point is not None:
-            idx, n = self.current_point_index + 1, len(self.spec_points)
-            title = (f"Measured — {point['name']} "
-                     f"({point['lower']:.{SPEC_DECIMALS}f}–{point['upper']:.{SPEC_DECIMALS}f}Ω)  {idx}/{n}")
-        else:
-            title = "Measured"
-        if self.tc["enabled"]:
-            title += (f"  → {self.tc['t0']:.1f} °C (TC)" if self._temp_is_fresh()
-                      else "  (TC: no temperature!)")
-        if title != self._measure_title:
-            self._measure_title = title
-            self._apply_measure_title()
-
-    # ── RS485 temperature sensor ──────────────────────────────────────────────
-
-    def start_temp_sensor(self):
-        cfg = self.temp_sensor_cfg
-        if not cfg.get("enabled", True):
-            self._on_temp_sensor_status("sensor disabled")
-            self.tc_tab.set_sensor_status("disabled in config")
-            return
-        if rs485 is None:
-            self._on_temp_sensor_status("sensor unavailable")
-            self.tc_tab.set_sensor_status("unavailable (pymodbus/matplotlib missing)")
-            self.log_event(f"Temperature sensor unavailable: {_RS485_IMPORT_ERROR}")
-            return
-        try:
-            self.temp_thread = rs485.ModbusReaderThread(
-                port=cfg["port"], baudrate=int(cfg["baud"]),
-                slave_id=int(cfg["slave_id"]), register_address=int(cfg["register"]),
-                register_count=1, poll_interval=float(cfg["poll_interval"]),
-                raw_at_4ma=float(cfg["raw_at_4ma"]), raw_at_20ma=float(cfg["raw_at_20ma"]),
-                temp_at_4ma=float(cfg["temp_at_4ma"]), temp_at_20ma=float(cfg["temp_at_20ma"]),
-            )
-        except Exception as e:
-            self.tc_tab.set_sensor_status(f"config error: {e}")
-            self.log_event(f"Temperature sensor config error: {e}")
-            return
-        self.temp_thread.reading.connect(self.on_temp_reading)
-        self.temp_thread.status.connect(self.tc_tab.set_sensor_status)
-        self.temp_thread.status.connect(self._on_temp_sensor_status)
-        self.temp_thread.error.connect(self.on_temp_error)
-        self.temp_thread.start()
-        self.log_event(f"Temperature sensor started on {cfg['port']} "
-                       f"(slave {cfg['slave_id']}, reg {cfg['register']}, "
-                       f"4-20 mA = {cfg['temp_at_4ma']}-{cfg['temp_at_20ma']} °C)")
-
-    def stop_temp_sensor(self):
-        if self.temp_thread is not None:
-            self.temp_thread.stop()
-            self.temp_thread.wait(2000)
-            self.temp_thread = None
-
-    def on_temp_reading(self, ts, temperature_c):
-        self.last_temp = temperature_c
-        self.last_temp_ts = ts
-        self._last_temp_error = ""
-        self.tc_tab.set_temperature(temperature_c, ts)
-        self._update_temp_card()
-        self._update_measure_title()
-
-    def simulate_temperature(self):
-        """Ctrl+T: type an ambient temperature by hand (no sensor attached, e.g.
-        developing on Windows). It goes through the same path as a real reading
-        and goes stale after TEMP_STALE_S like one, so it can't linger in
-        production if pressed by accident."""
-        start = self.last_temp if self.last_temp is not None else 25.0
-        dlg = NumpadDialog(current_value=start, decimals=1,
-                           title="Simulated object temperature t (°C)",
-                           min_val=-40.0, max_val=125.0, parent=self,
-                           allow_negative=True)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            t = dlg.get_value()
-            self.on_temp_reading(time.time(), t)
-            self.tc_tab.set_sensor_status("SIMULATED (Ctrl+T)")
-            self.log_event(f"Simulated temperature: {t:.1f} °C")
-            self.append_log(f"Simulated temperature t = {t:.1f} °C "
-                            f"(valid {int(TEMP_STALE_S)} s)")
-
-    def on_temp_error(self, message):
-        # The reader retries every few seconds; only log when the error changes.
-        if message != self._last_temp_error:
-            self._last_temp_error = message
-            self.log_event(f"Temperature sensor: {message}")
-        self._update_measure_title()
-
     def current_point(self):
         """Return the active point dict, or None when no sequence is loaded."""
         if self.spec_points and 0 <= self.current_point_index < len(self.spec_points):
@@ -1658,6 +1459,7 @@ class MainWindow(QDialog):
             self._apply_point_to_ui()
 
     def on_reset_point(self):
+        self._cancel_reconfirm()
         if self.spec_points:
             self.current_point_index = 0
             self._apply_point_to_ui()
@@ -1667,39 +1469,38 @@ class MainWindow(QDialog):
         self.btn_hold_toggle.blockSignals(True)
         self.btn_hold_toggle.setChecked(self.hold_previous)
         self.btn_hold_toggle.blockSignals(False)
-        if self.hold_previous:
-            self.btn_hold_toggle.setText("⏸ Hold Reading")
-            self.btn_hold_toggle.setStyleSheet(
-                "QPushButton{background:#2c3e50;color:white;border-radius:6px;}")
-        else:
-            self.btn_hold_toggle.setText("⤓ Release to 0")
-            self.btn_hold_toggle.setStyleSheet(
-                "QPushButton{background:#16a085;color:white;border-radius:6px;}")
+        # Label states the *current* mode; checked (highlighted) = hold.
+        self.btn_hold_toggle.setText(tr("btn_hold") if self.hold_previous
+                                     else tr("btn_release"))
 
     def on_hold_toggle(self, checked):
         """Toggle whether the measure display holds the last reading or releases
         to 0 while the meter is in standby (probes lifted / over-range)."""
         self.hold_previous = checked
         self._apply_hold_toggle_ui()
-        mode = "hold last reading" if checked else "release to 0"
+        mode = "hold last reading" if checked else "release (show WAITING)"
         self.log_event(f"Measure display mode: {mode}")
-        self.append_log(f"Display mode → {mode}")
-        # In release mode, clear a stale held value immediately so the change is
-        # visible without waiting for the next standby poll.
+        self.append_log(tr("log_display_mode",
+                           mode=tr("mode_hold") if checked else tr("mode_release")))
+        # In release mode, replace a stale held value with WAITING immediately so
+        # the change is visible without waiting for the next standby poll.
         if not checked:
-            self._set_measure_zero()
+            self._show_waiting()
         self.save_config()
 
     def on_point_card_tapped(self, index):
         """Operator tapped a point card — jump straight to that point."""
         if not self.spec_points or not (0 <= index < len(self.spec_points)):
             return
+        if self._reconfirm is not None and index != self._reconfirm["index"]:
+            self._cancel_reconfirm()
         self.current_point_index = index
         self._apply_point_to_ui()
         p = self.spec_points[index]
         self.log_event(f"Point selected by tap: {p['name']} (seq {p['seq']})")
-        self.append_log(f"Point → {p['name']} "
-                        f"({p['lower']:.{SPEC_DECIMALS}f}–{p['upper']:.{SPEC_DECIMALS}f} Ω)")
+        self.append_log(tr("log_point_selected", name=p['name'],
+                           lo=f"{p['lower']:.{SPEC_DECIMALS}f}",
+                           hi=f"{p['upper']:.{SPEC_DECIMALS}f}"))
 
     def _cards_signature(self):
         """Identity of the current card set — rebuild only when this changes."""
@@ -1710,30 +1511,47 @@ class MainWindow(QDialog):
         while self.point_cards_row.count():
             item = self.point_cards_row.takeAt(0)
             w = item.widget()
-            if w is not None:
+            if w is self.ui.label_single_hint:
+                w.hide()   # reused, not deleted
+            elif w is not None:
                 w.setParent(None)
                 w.deleteLater()
         self.point_cards = []
 
+        if not self.spec_points:
+            # No sequence: the row explains single-range mode instead.
+            self.point_cards_row.addWidget(self.ui.label_single_hint)
+            self.ui.label_single_hint.show()
         for i, p in enumerate(self.spec_points):
-            card = QPushButton(
-                f"{p['name']}\n{p['lower']:.{SPEC_DECIMALS}f} – {p['upper']:.{SPEC_DECIMALS}f} Ω\nseq {p['seq']}"
+            card = PointCard(
+                p["name"],
+                f"{p['lower']:.{SPEC_DECIMALS}f} – {p['upper']:.{SPEC_DECIMALS}f} Ω",
+                p["seq"],
             )
-            card.setCheckable(True)
-            card.setMinimumHeight(self._px(76))
-            card.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-            card.setStyleSheet(POINT_CARD_QSS)
+            # Up to 4 cards share the row; more scroll sideways (drag/flick).
+            card.setMinimumWidth(round(190 * self.ui.scale))
+            card.setMinimumHeight(round(88 * self.ui.scale))
+            card.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             card.clicked.connect(
                 lambda _checked=False, idx=i: self.on_point_card_tapped(idx))
             self.point_cards_row.addWidget(card)
             self.point_cards.append(card)
+        # A rebuilt card set (spec edited) invalidates old per-point results.
+        self.point_results = {}
+        # The scroll area would squeeze the row below the cards' minimum width
+        # (overlapping them); pin it so extra cards scroll instead.
+        row_min = 0
+        if self.point_cards:
+            row_min = (len(self.point_cards) * self.point_cards[0].minimumWidth()
+                       + (len(self.point_cards) - 1) * self.point_cards_row.spacing())
+        self.ui.point_cards_area.widget().setMinimumWidth(row_min)
         self._cards_sig = self._cards_signature()
 
     def _apply_point_to_ui(self):
-        """Reflect the active point in the limits, group title, and point cards.
+        """Reflect the active point in the limits, probe header, and point cards.
 
-        When a sequence is active the limit spinboxes are driven read-only from
-        the current point; otherwise they stay editable (single-range mode).
+        When a sequence is active the limit tiles are driven (locked) from the
+        current point; otherwise they stay editable (single-range mode).
         Cards are rebuilt only when the point set itself changes, so advancing
         during measurement just re-highlights (no widget churn / flicker).
         """
@@ -1743,22 +1561,30 @@ class MainWindow(QDialog):
         if getattr(self, "_cards_sig", None) != self._cards_signature():
             self._rebuild_point_cards()
         for i, card in enumerate(self.point_cards):
-            card.setChecked(i == self.current_point_index)
+            card.set_active(i == self.current_point_index)
+            res = self.point_results.get(i)
+            card.set_result(*(res if res else (None,)))
+        if 0 <= self.current_point_index < len(self.point_cards):
+            # Deferred: a freshly rebuilt row has no geometry until layout runs.
+            card = self.point_cards[self.current_point_index]
+            QTimer.singleShot(0, lambda: card.isVisible()
+                              and self.ui.point_cards_area.ensureWidgetVisible(card))
 
-        self.ui.doubleSpinBox_lowerLimit.setReadOnly(seq_active)
-        self.ui.doubleSpinBox_UpperLimit.setReadOnly(seq_active)
         self.btn_reset_point.setEnabled(seq_active)
 
         if seq_active:
             self.lower_limit = point["lower"]
             self.upper_limit = point["upper"]
-            self.ui.doubleSpinBox_lowerLimit.blockSignals(True)
-            self.ui.doubleSpinBox_UpperLimit.blockSignals(True)
-            self.ui.doubleSpinBox_lowerLimit.setValue(point["lower"])
-            self.ui.doubleSpinBox_UpperLimit.setValue(point["upper"])
-            self.ui.doubleSpinBox_lowerLimit.blockSignals(False)
-            self.ui.doubleSpinBox_UpperLimit.blockSignals(False)
-        self._update_measure_title()   # point info + TC state in one title
+            idx, n = self.current_point_index + 1, len(self.spec_points)
+            self.ui.label_probe_caption.setText(tr("cap_probe"))
+            self.ui.label_probe_point.setText(point["name"])
+            self._point_index_base = tr("point_index", i=idx, n=n)
+        else:
+            self.ui.label_probe_caption.setText(tr("cap_measured"))
+            self.ui.label_probe_point.setText(tr("single_range"))
+            self._point_index_base = ""
+        self._refresh_tc_tag()
+        self._refresh_limits_ui(editable=not seq_active)
         self._update_tc_axis()
 
     # ── Register / edit a model spec (writes resistance_spec) ─────────────────
@@ -1791,7 +1617,7 @@ class MainWindow(QDialog):
         """Write a spec to resistance_spec off-thread; queue it if the DB is down."""
         self._pending_spec = (model, points)
         self._set_spec_buttons_enabled(False)
-        self.append_log(f"Saving spec: {model} ({len(points)} points)...")
+        self.append_log(tr("log_saving_spec", model=model, n=len(points)))
         self.spec_upsert_thread = SpecUpsertThread(model, points)
         self.spec_upsert_thread.done.connect(
             self.on_spec_saved, Qt.ConnectionType.QueuedConnection)
@@ -1821,12 +1647,8 @@ class MainWindow(QDialog):
             self.current_point_index = 0
             self._apply_point_to_ui()
             return
-        resp = QMessageBox.question(
-            self, "Spec saved",
-            f"Spec for '{model}' is ready.\nSwitch to this model now?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if resp == QMessageBox.StandardButton.Yes:
+        if ask_yes_no(self, tr("msg_spec_saved_title"),
+                      tr("msg_spec_saved_body", model=model)):
             old = self.cleaned_model
             self.cleaned_model = model
             self._set_model_text(model)
@@ -1844,7 +1666,8 @@ class MainWindow(QDialog):
         norm = self._normalise_points(raw)
 
         self.log_event(f"Spec saved to DB for '{model}' ({count} points)")
-        self.append_log(f"✓ Spec saved: {model} ({count} points)")
+        self._set_db_online(True)
+        self.append_log(tr("log_spec_saved", model=model, n=count))
         self._adopt_spec(model, norm)
 
         # Server just proved reachable — push any specs queued while it was down.
@@ -1860,35 +1683,30 @@ class MainWindow(QDialog):
         if not queueable:
             # Validation error — retrying can never help.
             self.log_event(f"Spec rejected for '{model}': {err}")
-            self.append_log(f"! Spec rejected: {err}")
-            QMessageBox.critical(
-                self, "Spec rejected",
-                f"The spec for '{model}' is not valid:\n{err}",
-            )
+            self.append_log(tr("log_spec_rejected", err=err))
+            show_message(self, QMessageBox.Icon.Critical, tr("msg_spec_rejected_title"),
+                         tr("msg_spec_rejected_body", model=model, err=err))
             return
 
         raw = pending[1] if (pending and pending[0] == model) else []
         count = self.spec_queue.queue_spec(model, raw)
+        self._set_db_online(False)
         self.log_event(f"Spec queued offline for '{model}': {err}")
-        self.append_log(f"! DB unreachable — spec for {model} queued "
-                        f"({count} pending, will upload automatically)")
+        self.append_log(tr("log_spec_queued", model=model, n=count))
         # The spec is valid, so use it locally right away.
         self._adopt_spec(model, self._normalise_points(raw))
-        QMessageBox.information(
-            self, "Spec queued",
-            f"The database is unreachable, so the spec for '{model}' was saved "
-            f"locally to {SpecQueueManager.PENDING_FILE}.\n\n"
-            f"It is active on this device now and will upload automatically "
-            f"when the server is back.",
-        )
+        show_message(self, QMessageBox.Icon.Information, tr("msg_spec_queued_title"),
+                     tr("msg_spec_queued_body", model=model,
+                        file=SpecQueueManager.PENDING_FILE))
 
     def on_spec_flush_complete(self, flushed, remaining):
         """A queued spec batch reached the DB."""
         self.log_event(f"Spec queue flushed: {flushed} model(s), {remaining} remaining")
+        self._refresh_db_status()
         if remaining:
-            self.append_log(f"Spec queue: {flushed} uploaded, {remaining} still pending")
+            self.append_log(tr("log_spec_queue_partial", done=flushed, left=remaining))
         else:
-            self.append_log(f"✓ Spec queue empty — {flushed} model(s) uploaded")
+            self.append_log(tr("log_spec_queue_done", done=flushed))
 
     # ── Startup schema guard (optional, non-fatal) ────────────────────────────
 
@@ -1905,6 +1723,7 @@ class MainWindow(QDialog):
         A server that's simply unreachable is not treated as a problem — the
         offline queue handles that and a later check will catch a real mismatch.
         """
+        self._set_db_online(bool(result.get("reachable")) and not result.get("error"))
         if result.get("error") or not result.get("reachable"):
             self.log_event(f"Schema check skipped (DB not reachable): {result.get('error')}")
             return
@@ -1921,7 +1740,7 @@ class MainWindow(QDialog):
                    ". Apply migrations/001_multipoint_spec.sql to ENGINEER_DB "
                    "(uploads will fail until then).")
             self.log_event("WARNING: " + msg)
-            self.append_log("! " + msg)
+            self.append_log(tr("log_schema_old", problems="; ".join(problems)))
         else:
             self.log_event("DB schema OK (resistance_spec + point columns present)")
 
@@ -1973,14 +1792,14 @@ class MainWindow(QDialog):
         if len(raw) < 3:
             return
         decoded = self._decode_model_text(raw)
+        if not decoded and is_ignored_scan(raw):
+            # URL / TISI QR code — not a model label. Keep the current model.
+            self.log_event(f"Barcode scan ignored (URL / not a model): '{raw}'")
+            self.append_log(tr("log_barcode_ignored"))
+            return
         if not decoded:
             self.log_event(f"Barcode scan: decode failed for '{raw}'")
-            self.append_log(f"Barcode: unrecognised format — {raw}")
-            return
-        problem = model_name_problem(decoded)
-        if problem:
-            self.log_event(f"Barcode scan refused '{raw}': {problem}")
-            self.append_log(f"! Barcode ignored — {problem}")
+            self.append_log(tr("log_barcode_unknown", raw=raw))
             return
         self.log_event(f"Barcode scan: '{raw}' → '{decoded}'")
         old_model = self.cleaned_model
@@ -1990,7 +1809,7 @@ class MainWindow(QDialog):
         self.load_model_spec()
         self.save_config()
         self.log_model_change("CHANGE", old_model, decoded, "barcode")
-        self.append_log(f"Model set via barcode: {decoded}")
+        self.append_log(tr("log_model_by_barcode", model=decoded))
 
     def compare_spec(self, value_str, lower=None, upper=None):
         """Compare reading with spec limits. Returns (pass, result_text).
@@ -2031,7 +1850,7 @@ class MainWindow(QDialog):
 
     def start_mode(self):
         if not self.current_port:
-            QMessageBox.warning(self, "No Port", "No HIOKI port available.")
+            show_message(self, QMessageBox.Icon.Warning, tr("msg_no_port_title"), tr("msg_no_port_body"))
             return
         if self.connected:
             return
@@ -2058,10 +1877,11 @@ class MainWindow(QDialog):
             self.previous_raw = None
             self.consecutive_same = 0
             self.consecutive_timeouts = 0
-            self.log_model.setStringList([])
 
-            self.append_log("Auto Hold enabled. Polling FETC?...")
+            self.append_log(tr("log_auto_hold"))
             self.log_event("Device configured and polling started")
+            self._show_reading("idle", status=tr("status_ready")
+                               + (self._probe_hint() or tr("status_probe_part")))
             # Start background poll thread — all serial I/O moves off the main thread
             self.poll_thread = PollWorkerThread(
                 self.serial_obj, POLL_INTERVAL_MS, health_check_interval=30
@@ -2076,7 +1896,7 @@ class MainWindow(QDialog):
             self.retry_upload_timer.start(5000)   # Check every 5 s; DBUploadManager gates actual retries via backoff
         except Exception as e:
             self.log_event(f"Connection failed: {e}")
-            QMessageBox.critical(self, "Connection Error", str(e))
+            show_message(self, QMessageBox.Icon.Critical, tr("msg_conn_error_title"), str(e))
             self.connected = False
 
     def on_fetch_result(self, msg):
@@ -2091,7 +1911,7 @@ class MainWindow(QDialog):
             self.consecutive_same = 0
             self.consecutive_timeouts += 1
             self.log_event(f"FETC? timeout #{self.consecutive_timeouts}")
-            self.append_log(f"[{time_str}] Error: {msg}")
+            self.append_log(tr("log_error", time=time_str, msg=msg))
             if self.consecutive_timeouts >= self.max_consecutive_timeouts:
                 self.log_event(f"Max consecutive timeouts reached ({self.consecutive_timeouts}), triggering reconnect")
                 self.handle_comm_error("Multiple timeouts detected")
@@ -2101,7 +1921,7 @@ class MainWindow(QDialog):
             self.consecutive_same = 0
             self.consecutive_timeouts += 1
             self.log_event(f"FETC? error: {msg}")
-            self.append_log(f"[{time_str}] Error: {msg}")
+            self.append_log(tr("log_error", time=time_str, msg=msg))
             self.handle_comm_error(msg)
             return
 
@@ -2112,14 +1932,13 @@ class MainWindow(QDialog):
         stable_eps = 1e-9
         try:
             current_val = float(msg)
-            # Over-range == standby (probes lifted). Hold the last reading, or
-            # release the display to 0 when hold is toggled off.
+            # Over-range == open circuit (probes lifted). Hold the last reading,
+            # or show WAITING when hold is toggled off.
             if abs(current_val) > MAX_VALID_OHMS:
                 self.consecutive_same = 0
                 self.previous_numeric = None
                 self.previous_raw = None
-                if not self.hold_previous:
-                    self._set_measure_zero()
+                self._show_waiting()
                 return
             if self.previous_numeric is None or abs(current_val - self.previous_numeric) >= stable_eps:
                 self.previous_numeric = current_val
@@ -2138,140 +1957,546 @@ class MainWindow(QDialog):
                 if self.consecutive_same == 2:
                     record = True
 
-        # Update measurement display. In Release mode, a value that keeps
-        # repeating past the record point is the meter auto-holding a captured
-        # reading (standby) → blank to 0 without waiting for the eventual "OL".
-        # A non-numeric reading (e.g. "OL") is likewise standby.
+        # Update measurement display. Colour tells the operator what the number
+        # means: amber = settling, white = stable (about to record), green/red =
+        # recorded (set below). In Release mode a recorded value the meter is
+        # still auto-holding waiting_delay_s later means open circuit → WAITING.
+        if (not self.hold_previous and self.consecutive_same >= 3
+                and time.time() - self._recorded_at >= self.waiting_delay_s):
+            self._show_waiting()
+            return
+        try:
+            value = float(msg)
+            self.tc_tab.set_rt(value)            # live Rt for the TC screen / chart
+            value = self._display_resistance(value)
+            if self.consecutive_same == 1:
+                self._display_value, self._display_range = value, (None, None)
+                self._show_reading("settling", value, tr("status_settling"))
+            elif record:
+                self._show_reading("stable", value, tr("status_stable"))
+            # consecutive_same >= 3: the meter is auto-holding the reading
+            # just recorded — keep its PASS/FAIL colour on screen.
+        except ValueError:
+            if not self.hold_previous:
+                self._show_waiting()
+
+        if record:
+            self._record_reading(msg, time_str)
+
+    # ── Recording a stable reading (judge → NG reconfirm or commit) ───────────
+
+    def _record_reading(self, msg, time_str):
+        """A reading became stable: judge it against the current point (on Rt₀
+        when temperature correction is on). An NG starts / continues the NG
+        reconfirm instead of being uploaded; anything else is committed."""
+        point = self.current_point()
+        if point is not None:
+            index = self.current_point_index
+            p_name, p_seq = point["name"], point["seq"]
+            p_lower, p_upper = point["lower"], point["upper"]
+        else:
+            index = p_name = p_seq = p_lower = p_upper = None
+
         try:
             rt_val = float(msg)
         except ValueError:
             rt_val = None
+        judge_value = msg
         if rt_val is not None:
-            self.tc_tab.set_rt(rt_val)      # live Rt for the TC tab / chart
-        self._update_measure_title()
+            judge_value, tc_note = self._tc_value(rt_val)
+            if judge_value is None:
+                # TC on but not applicable: a raw Rt stored in the same column
+                # would be indistinguishable from a corrected one — don't record.
+                self.log_event(f"TC: reading {msg} NOT recorded — {tc_note}")
+                self.append_log(tr("log_tc_not_recorded", note=tc_note))
+                self.set_judgement_status(None, tc_note)
+                return
+        pass_result, result_text = (self.compare_spec(judge_value, p_lower, p_upper)
+                                    if point is not None else self.compare_spec(judge_value))
 
-        if not self.hold_previous and self.consecutive_same >= HOLD_RELEASE_AFTER:
-            self._set_measure_zero()
-        elif rt_val is not None:
-            # Shows Rt0 when temperature correction applies, otherwise raw Rt.
-            self.ui.doubleSpinBox_Measure.setValue(self._display_resistance(rt_val))
-        elif not self.hold_previous:
-            self._set_measure_zero()
-
-        if record:
-            # Temperature correction: judge and record Rt0 instead of Rt. When TC
-            # is ON but can't be applied (no fresh temperature), don't record.
-            judge_value, tc_note = msg, ""
-            if rt_val is not None:
-                judge_value, tc_note = self._tc_value(rt_val)
-                if judge_value is None:
-                    self.log_event(f"TC: reading {msg} NOT recorded — {tc_note}")
-                    self.append_log(f"[{time_str}] ⚠ TC on — {tc_note}; reading not recorded")
-                    self.set_judgement_status(None)
-                    return
-
-            # Judge against the current point's range when a sequence is active,
-            # otherwise fall back to the single lower/upper limits.
-            point = self.current_point()
-            if point is not None:
-                p_name, p_seq = point["name"], point["seq"]
-                p_lower, p_upper = point["lower"], point["upper"]
-                pass_result, result_text = self.compare_spec(judge_value, p_lower, p_upper)
-            else:
-                p_name = p_seq = p_lower = p_upper = None
-                pass_result, result_text = self.compare_spec(judge_value)
-            cleaned_model = self.cleaned_model.strip()
-
-            current_time = datetime.now()
-            can_insert = (self.last_db_insert_time is None or
-                         (current_time - self.last_db_insert_time).total_seconds() >= 5)
-
-            print(f"DEBUG: cleaned_model='{cleaned_model}', can_insert={can_insert}, value={msg}")
-
-            # Ensure model is set; if empty, prompt once at record time
-            if not cleaned_model:
-                text, ok = self._prompt_model_text()
-                problem = model_name_problem(self._decode_model_text(text)) if ok else None
-                if problem:
-                    self.append_log(f"! Model not set — {problem}")
-                    ok = False
-                if ok:
-                    cleaned_model = self._decode_model_text(text)
+        # Ensure model is set; if empty, prompt once at record time
+        if not self.cleaned_model.strip():
+            text, ok = self._prompt_model_text()
+            if ok:
+                cleaned_model = self._decode_model_text(text)
+                if cleaned_model:
                     self.log_model_change("CHANGE", "", cleaned_model, "prompt")
                     self.cleaned_model = cleaned_model
                     self._set_model_text(cleaned_model)
                     self.load_model_spec()
-                    print(f"DEBUG: Model set via prompt: '{cleaned_model}'")
+                else:
+                    self.append_log(tr("log_model_not_changed", n=MODEL_MAX_LEN))
 
-            # Map result to status string for DB
-            if pass_result is True:
-                status_for_db = "OK"
-            elif pass_result is False:
-                status_for_db = "NG"
-            else:
-                status_for_db = "N/A"
+        try:
+            value = round(float(judge_value), 3)
+            value_text = f"{value:.3f}"
+        except (TypeError, ValueError):
+            value, value_text = msg, str(msg)
+        info = {
+            "index": index, "p_name": p_name, "p_seq": p_seq,
+            "p_lower": p_lower, "p_upper": p_upper,
+            "lo": self.lower_limit if p_lower is None else p_lower,
+            "hi": self.upper_limit if p_upper is None else p_upper,
+            "value": value, "value_text": value_text,
+            "result_text": result_text, "time_str": time_str,
+        }
 
+        if pass_result is False and self.ng_reconfirm_max > 0:
+            self._ng_attempt(info)
+            return
+        if self._reconfirm is not None:
+            # The re-measure passed: the NG is cancelled, nothing NG is sent.
+            self._reconfirm = None
+            self._close_ng_dialog()
+            self.log_event("NG reconfirm: re-measure passed — NG cancelled")
+            self.append_log(tr("log_ng_cleared"))
+        self._commit_result(info, pass_result)
+
+    def _commit_result(self, info, pass_result, force_upload=False):
+        """Final result of a point: CSV + DB upload, counters, verdict, card
+        colour, then advance to the next point."""
+        p_name, p_seq = info["p_name"], info["p_seq"]
+        p_lower, p_upper = info["p_lower"], info["p_upper"]
+        value, value_text, time_str = info["value"], info["value_text"], info["time_str"]
+        cleaned_model = self.cleaned_model.strip()
+        current_time = datetime.now()
+        can_insert = force_upload or (self.last_db_insert_time is None or
+                                      (current_time - self.last_db_insert_time).total_seconds() >= 5)
+        status_for_db = {True: "OK", False: "NG"}.get(pass_result, "N/A")
+
+        try:
+            self.append_csv_row(current_time, value, status_for_db,
+                                cleaned_model, point=p_name, seq=p_seq,
+                                lower=p_lower, upper=p_upper, db_status="pending")
+            csv_status = tr("csv_ok")
+            # Histogram mirrors today's CSV: new day → start from the new file.
+            if self._tc_hist_date != current_time.date():
+                self._load_tc_history()
+            elif isinstance(value, (int, float)):
+                self.tc_tab.add_reading(p_seq, p_name, value)
+        except Exception as e:
+            csv_status = tr("csv_error", e=e)
+            print(f"CSV write error: {e}")
+
+        if cleaned_model and can_insert:
             try:
-                # With TC on this is Rt0, stored in the existing Resistance column.
-                resistance_value = round(float(judge_value), 3)
-            except ValueError:
-                resistance_value = msg
-
-            try:
-                self.append_csv_row(current_time, resistance_value, status_for_db,
-                                    cleaned_model, point=p_name, seq=p_seq,
-                                    lower=p_lower, upper=p_upper, db_status="pending")
-                csv_status = "(CSV: ✓)"
-                # Histogram mirrors today's CSV: new day → start from the new file.
-                if self._tc_hist_date != current_time.date():
-                    self._load_tc_history()
-                elif isinstance(resistance_value, (int, float)):
-                    self.tc_tab.add_reading(p_seq, p_name, resistance_value)
+                self.db_manager.upload_async(cleaned_model, value, status_for_db,
+                                             self.on_upload_complete, point=p_name, seq=p_seq,
+                                             lower=p_lower, upper=p_upper)
+                self.last_db_insert_time = current_time
+                db_status = tr("db_uploading")
             except Exception as e:
-                csv_status = f"(CSV Error: {e})"
-                print(f"CSV write error: {e}")
+                db_status = tr("db_error", e=e)
+                print(f"Database upload error: {e}")
+        elif not cleaned_model:
+            db_status = tr("db_no_model")
+        else:
+            db_status = tr("db_wait")
 
-            if cleaned_model and can_insert:
-                try:
-                    print(f"DEBUG: Uploading to DB - Model: {cleaned_model}, Value: {resistance_value}, Status: {status_for_db}")
-                    # Use async upload to prevent GUI hang
-                    self.db_manager.upload_async(cleaned_model, resistance_value, status_for_db,
-                                                 self.on_upload_complete, point=p_name, seq=p_seq,
-                                                 lower=p_lower, upper=p_upper)
-                    self.last_db_insert_time = current_time
-                    db_status = "(DB: Uploading...)"
-                except Exception as e:
-                    db_status = f"(DB Error: {e})"
-                    print(f"Database upload error: {e}")
-            elif not cleaned_model:
-                db_status = "(DB: No Model)"
-                print("DEBUG: No model set - click Model button to enter model name")
+        self.append_result(time_str, p_name, value_text, pass_result, info["result_text"],
+                           f"{csv_status} {db_status}")
+        self._count_result(status_for_db, cleaned_model)
+
+        lo, hi = info["lo"], info["hi"]
+        where = f"{p_name} · " if p_name else ""
+        self.set_judgement_status(
+            pass_result,
+            f"{where}{value_text} Ω  ({lo:.{SPEC_DECIMALS}f} – {hi:.{SPEC_DECIMALS}f})"
+            f"  ·  {time_str[:8]}")
+
+        # The card keeps this point's value + colour until it is measured again.
+        if self.spec_points and info["index"] is not None:
+            self.point_results[info["index"]] = (pass_result, value_text)
+            self.advance_point()   # wraps to point 1; refreshes the cards
+
+        verdict = {True: "PASS", False: "FAIL"}.get(pass_result, "N/A")
+        state = {True: "pass", False: "fail"}.get(pass_result, "stable")
+        self._display_value = value
+        self._display_range = (lo, hi)
+        self._recorded_at = time.time()
+        self._show_reading(state, value, tr("status_recorded", where=where, verdict=verdict)
+                           + (tr("status_next", name=self.current_point()['name'])
+                              if self.spec_points else ""),
+                           lo, hi)
+
+    # ── NG reconfirm ──────────────────────────────────────────────────────────
+
+    def _ng_attempt(self, info):
+        """An NG reading: open / update the reconfirm dialog. The NG is written
+        to the CSV as an attempt only; it is uploaded once confirmed."""
+        rc = self._reconfirm
+        if rc is None or rc["index"] != info["index"]:
+            rc = self._reconfirm = dict(info, n=0)
+        else:
+            n = rc["n"] + 1
+            rc.update(info)
+            rc["n"] = n
+        n, mx = rc["n"], self.ng_reconfirm_max
+        p_name = info["p_name"]
+        where = f"{p_name} · " if p_name else ""
+        try:
+            self.append_csv_row(datetime.now(), info["value"], "NG", self.cleaned_model.strip(),
+                                point=p_name, seq=info["p_seq"], lower=info["p_lower"],
+                                upper=info["p_upper"], db_status=f"reconfirm {n}/{mx}")
+        except Exception as e:
+            print(f"CSV write error: {e}")
+        self.log_event(f"NG reconfirm {n}/{mx}: {where}{info['value_text']} Ω")
+        self.append_log(tr("log_ng_reconfirm", where=where, value=info["value_text"], n=n, max=mx))
+        if info["index"] is not None:
+            self.point_results[info["index"]] = (False, info["value_text"])
+            self._apply_point_to_ui()
+        lo, hi = info["lo"], info["hi"]
+        self.set_judgement_status(
+            False, f"{where}{info['value_text']} Ω  ({lo:.{SPEC_DECIMALS}f} – "
+                   f"{hi:.{SPEC_DECIMALS}f})  ·  " + tr("ng_count", n=n, max=mx))
+        self._display_value = info["value"]
+        self._display_range = (lo, hi)
+        self._recorded_at = time.time()
+        self._show_reading("fail", info["value"],
+                           tr("status_reconfirm", name=p_name or "", n=n, max=mx), lo, hi)
+        if n >= mx:
+            self._confirm_ng()
+            return
+        if self.ng_dialog is None:
+            self.ng_dialog = NgReconfirmDialog(self)
+            self.ng_dialog.confirm_clicked.connect(self._confirm_ng)
+        self.ng_dialog.show_state(p_name, info["value_text"], lo, hi, n, mx)
+
+    def _confirm_ng(self):
+        """Confirm NG (button or the last attempt): upload the last NG value."""
+        rc = self._reconfirm
+        if rc is None:
+            return
+        self._reconfirm = None
+        self._close_ng_dialog()
+        where = f"{rc['p_name']} · " if rc["p_name"] else ""
+        self.log_event(f"NG confirmed after {rc['n']} re-measure(s): {where}{rc['value_text']} Ω")
+        self.append_log(tr("log_ng_confirmed", where=where, value=rc["value_text"]))
+        self._commit_result(rc, False, force_upload=True)
+
+    def _cancel_reconfirm(self):
+        """Point / model changed while an NG was pending: drop it (the attempts
+        stay in the CSV), nothing is uploaded."""
+        if self._reconfirm is None:
+            return
+        self._reconfirm = None
+        self._close_ng_dialog()
+        self.log_event("NG reconfirm cancelled (point or model changed)")
+        self.append_log(tr("log_ng_discarded"))
+
+    def _close_ng_dialog(self):
+        if self.ng_dialog is not None:
+            self.ng_dialog.hide()
+
+    def _blink_tick(self):
+        self._blink_on = not self._blink_on
+        alarm = self._reconfirm is not None
+        if 0 <= self.current_point_index < len(self.point_cards):
+            self.point_cards[self.current_point_index].set_blink(self._blink_on, alarm)
+
+    # ── Waiting time (operator setting) ───────────────────────────────────────
+
+    def _apply_waiting_ui(self):
+        self.ui.btn_waiting.setText(tr("btn_waiting", s=f"{self.waiting_delay_s:g}"))
+
+    def on_waiting_clicked(self):
+        dlg = NumpadDialog(current_value=self.waiting_delay_s, decimals=1,
+                           title=tr("title_waiting"), min_val=0.0,
+                           max_val=WAITING_DELAY_MAX_S, parent=self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.waiting_delay_s = float(dlg.get_value())
+            self._apply_waiting_ui()
+            self.save_config()
+            self.log_event(f"Waiting time set to {self.waiting_delay_s:g} s")
+            self.append_log(tr("log_waiting_set", s=f"{self.waiting_delay_s:g}"))
+
+    # ── Temperature Correction screen + Object Temperature chip ───────────────
+
+    def _build_tc_page(self, scale):
+        px = lambda v: max(1, round(v * scale))
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(px(14), px(14), px(14), px(14))
+        lay.setSpacing(px(10))
+        head = QHBoxLayout()
+        self.btn_tc_back = QPushButton()
+        self.btn_tc_back.setProperty("role", "tool")
+        self.btn_tc_back.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.btn_tc_back.clicked.connect(lambda: self.stack.setCurrentIndex(0))
+        self.label_tc_title = QLabel()
+        self.label_tc_title.setStyleSheet(
+            f"color:{UI_COLORS['accent_hi']};font-size:{px(24)}px;font-weight:bold;")
+        head.addWidget(self.btn_tc_back)
+        head.addSpacing(px(16))
+        head.addWidget(self.label_tc_title)
+        head.addStretch(1)
+        lay.addLayout(head)
+        self.tc_tab = TempCorrectionTab(page)
+        lay.addWidget(self.tc_tab, 1)
+        self.tc_tab.settings_changed.connect(self.on_tc_settings_changed)
+        self.tc_tab.axis_changed.connect(self.on_tc_axis_changed)
+        self.tc_tab.apply_scale(scale)
+        self.stack.addWidget(page)
+        self._retranslate_tc_page()
+
+    def _retranslate_tc_page(self):
+        self.btn_tc_back.setText(tr("btn_back"))
+        self.label_tc_title.setText(tr("tc_title"))
+
+    def _on_temp_sensor_status(self, text):
+        self._temp_sensor_status = text
+        self._update_temp_chip()
+
+    def _update_temp_chip(self):
+        if self._temp_is_fresh():
+            text, state = f"{self.last_temp:.1f} °C", "ok"
+        else:
+            text = "-- °C"
+            st = self._temp_sensor_status
+            state = "bad" if any(k in st for k in ("fault", "over", "disconnected", "error")) else "off"
+        if self.ui.label_temp.text() != text:
+            self.ui.label_temp.setText(text)
+        set_prop(self.ui.label_temp, "state", state)
+
+    def _refresh_tc_tag(self):
+        """Point index (+ TC state when TC is on) in the measured panel header."""
+        tag = ""
+        if self.tc.get("enabled"):
+            tag = (tr("tc_tag_on", t0=f"{self.tc['t0']:.1f}") if self._temp_is_fresh()
+                   else tr("tc_tag_notemp"))
+        text = "  ·  ".join(x for x in (self._point_index_base, tag) if x)
+        if self.ui.label_point_index.text() != text:
+            self.ui.label_point_index.setText(text)
+
+    def _load_model_tc(self, model):
+        """Load a model's TC settings from config (defaults: OFF, 20 °C, 3930 ppm)."""
+        raw = None
+        if model:
+            try:
+                if os.path.exists(CONFIG_FILE):
+                    with open(CONFIG_FILE, 'r') as f:
+                        raw = json.load(f).get("models", {}).get(model, {}).get("tc")
+            except Exception as e:
+                print(f"Error loading TC settings: {e}")
+        self.tc = normalize_tc_settings(raw)
+        if not model:
+            self.tc["enabled"] = False   # TC is per model; nothing to apply to
+        self.tc_tab.set_model(model)
+        self.tc_tab.load_settings(self.tc["enabled"], self.tc["t0"], self.tc["alpha_ppm"])
+        self.tc_tab.set_axis_temperature_on_x(self.tc_x_is_temp)
+        self._refresh_tc_tag()
+
+    def _save_model_tc(self, model, tc):
+        """Persist a model's TC settings (merged, like _cache_points)."""
+        try:
+            if os.path.exists(CONFIG_FILE):
+                with open(CONFIG_FILE, 'r') as f:
+                    config = json.load(f)
             else:
-                db_status = "(DB: Wait 10s)"
-                print(f"DEBUG: Waiting for 10s interval - last insert was {(current_time - self.last_db_insert_time).total_seconds():.1f}s ago")
+                config = {}
+            config.setdefault("models", {}).setdefault(model, {})
+            config["models"][model]["tc"] = tc
+            with open(CONFIG_FILE, 'w') as f:
+                json.dump(config, f, indent=2)
+        except Exception as e:
+            print(f"Error saving TC settings: {e}")
 
-            point_tag = f"[{p_name}] " if p_name else ""
-            shown = f"{resistance_value} Ω [TC: {tc_note}]" if tc_note else msg
-            log_line = f"{time_str}  {point_tag}{shown}  {result_text}  {csv_status}  {db_status}"
-            self.append_log(log_line)
+    def on_tc_settings_changed(self, enabled, t0, alpha_ppm):
+        model = self.cleaned_model.strip()
+        if not model:
+            self.append_log(tr("log_tc_set_model"))
+            self.tc_tab.load_settings(False, t0, alpha_ppm)
+            return
+        self.tc = normalize_tc_settings(
+            {"enabled": enabled, "t0": t0, "alpha_ppm": alpha_ppm})
+        self._save_model_tc(model, self.tc)
+        state = "ON" if self.tc["enabled"] else "OFF"
+        self.log_event(f"TC for '{model}': {state}, t0={self.tc['t0']:.1f} °C, "
+                       f"alpha={self.tc['alpha_ppm']} ppm/°C")
+        self.append_log(tr("log_tc_state", state=state, t0=f"{self.tc['t0']:.1f}",
+                           alpha=self.tc['alpha_ppm']))
+        self._refresh_tc_tag()
 
-            # Update judgement indicator
-            self.set_judgement_status(pass_result)
+    def on_tc_axis_changed(self, x_is_temp):
+        self.tc_x_is_temp = x_is_temp
+        self.save_config()
 
-            # Auto-advance to the next point in the sequence (wraps to point 1).
-            if self.spec_points:
-                self.advance_point()
-        # Removed logging of unstable readings - only log stable data
+    def _update_tc_axis(self):
+        """Fix the TC chart's resistance axis to the model's whole spec band, so
+        it doesn't move while the sequence auto-advances point to point."""
+        if getattr(self, "tc_tab", None) is None:
+            return
+        if self.spec_points:
+            lo = min(p["lower"] for p in self.spec_points)
+            hi = max(p["upper"] for p in self.spec_points)
+            spec = [{"seq": p["seq"], "name": p["name"],
+                     "lower": p["lower"], "upper": p["upper"]} for p in self.spec_points]
+        else:
+            lo, hi = self.lower_limit, self.upper_limit
+            spec = [{"seq": None, "name": "All readings", "lower": lo, "upper": hi}]
+        self.tc_tab.set_spec_range(lo, hi)
+        model = self.cleaned_model.strip()
+        self.tc_tab.set_hist_spec(spec, f"Today · {model}" if model else "Today")
+
+    def _load_tc_history(self):
+        """Fill the TC histogram with today's final results for the model
+        (NG re-measure attempts are skipped)."""
+        if getattr(self, "tc_tab", None) is None:
+            return
+        model = self.cleaned_model.strip()
+        now = datetime.now()
+        self._tc_hist_date = now.date()
+        rows = []
+        path = self.get_daily_csv_path(now)
+        if model and os.path.exists(path):
+            try:
+                with open(path, newline="", encoding="utf-8") as f:
+                    for r in csv.reader(f):
+                        if len(r) < 4 or r[0] == "Timestamp" or r[3].strip() != model:
+                            continue
+                        if len(r) > 10 and r[10].startswith("reconfirm"):
+                            continue
+                        try:
+                            value = float(r[1])
+                        except ValueError:
+                            continue
+                        seq = name = None
+                        if len(r) >= len(CSV_HEADERS):
+                            name = r[4] or None
+                            try:
+                                seq = int(r[5]) if r[5] != "" else None
+                            except ValueError:
+                                seq = None
+                        rows.append((seq, name, value))
+            except Exception as e:
+                self.log_event(f"Histogram: could not read {os.path.basename(path)}: {e}")
+        self.tc_tab.set_history(rows)
+
+    def _temp_is_fresh(self):
+        return (self.last_temp is not None
+                and time.time() - self.last_temp_ts <= TEMP_STALE_S)
+
+    def _tc_value(self, rt):
+        """Value to judge/record for a raw reading Rt: (value, note). value is
+        None when TC is ON but cannot be applied."""
+        if not self.tc["enabled"]:
+            return rt, ""
+        if not self._temp_is_fresh():
+            return None, "no fresh temperature from the sensor"
+        t0, alpha = self.tc["t0"], self.tc["alpha_ppm"]
+        rt0 = correct_resistance(rt, self.last_temp, t0, alpha)
+        if rt0 is None:
+            return None, "invalid correction (1 + α(t − t₀) ≤ 0)"
+        return rt0, f"Rt {rt:.3f} Ω @ {self.last_temp:.1f} °C → {t0:.1f} °C"
+
+    def _display_resistance(self, rt):
+        """What the big measured number shows: Rt₀ when TC applies, else Rt."""
+        if self.tc["enabled"] and self._temp_is_fresh():
+            rt0 = correct_resistance(rt, self.last_temp, self.tc["t0"], self.tc["alpha_ppm"])
+            if rt0 is not None:
+                return rt0
+        return rt
+
+    # ── RS485 temperature sensor ──────────────────────────────────────────────
+
+    def start_temp_sensor(self):
+        cfg = self.temp_sensor_cfg
+        if not cfg.get("enabled", True):
+            self._on_temp_sensor_status("sensor disabled")
+            self.tc_tab.set_sensor_status("disabled in config")
+            return
+        if rs485 is None:
+            self._on_temp_sensor_status("sensor unavailable")
+            self.tc_tab.set_sensor_status("unavailable (pymodbus/matplotlib missing)")
+            self.log_event(f"Temperature sensor unavailable: {_RS485_IMPORT_ERROR}")
+            return
+        try:
+            self.temp_thread = rs485.ModbusReaderThread(
+                port=cfg["port"], baudrate=int(cfg["baud"]),
+                slave_id=int(cfg["slave_id"]), register_address=int(cfg["register"]),
+                register_count=1, poll_interval=float(cfg["poll_interval"]),
+                raw_at_4ma=float(cfg["raw_at_4ma"]), raw_at_20ma=float(cfg["raw_at_20ma"]),
+                temp_at_4ma=float(cfg["temp_at_4ma"]), temp_at_20ma=float(cfg["temp_at_20ma"]),
+            )
+        except Exception as e:
+            self.tc_tab.set_sensor_status(f"config error: {e}")
+            self.log_event(f"Temperature sensor config error: {e}")
+            return
+        self.temp_thread.reading.connect(self.on_temp_reading)
+        self.temp_thread.status.connect(self.tc_tab.set_sensor_status)
+        self.temp_thread.status.connect(self._on_temp_sensor_status)
+        self.temp_thread.error.connect(self.on_temp_error)
+        self.temp_thread.start()
+        self.log_event(f"Temperature sensor started on {cfg['port']} "
+                       f"(slave {cfg['slave_id']}, reg {cfg['register']}, "
+                       f"4-20 mA = {cfg['temp_at_4ma']}-{cfg['temp_at_20ma']} °C)")
+
+    def stop_temp_sensor(self):
+        if self.temp_thread is not None:
+            self.temp_thread.stop()
+            self.temp_thread.wait(2000)
+            self.temp_thread = None
+
+    def on_temp_reading(self, ts, temperature_c):
+        self.last_temp = temperature_c
+        self.last_temp_ts = ts
+        self._last_temp_error = ""
+        self.tc_tab.set_temperature(temperature_c, ts)
+        self._update_temp_chip()
+        self._refresh_tc_tag()
+
+    def simulate_temperature(self):
+        """Ctrl+T: type an object temperature by hand (no sensor attached). It
+        goes stale after TEMP_STALE_S like a real reading."""
+        start = self.last_temp if self.last_temp is not None else 25.0
+        dlg = NumpadDialog(current_value=start, decimals=1,
+                           title="Simulated object temperature t (°C)",
+                           min_val=-40.0, max_val=125.0, parent=self,
+                           allow_negative=True)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            t = dlg.get_value()
+            self.on_temp_reading(time.time(), t)
+            self.tc_tab.set_sensor_status("SIMULATED (Ctrl+T)")
+            self.log_event(f"Simulated temperature: {t:.1f} °C")
+
+    def on_temp_error(self, message):
+        # The reader retries every few seconds; only log when the error changes.
+        if message != self._last_temp_error:
+            self._last_temp_error = message
+            self.log_event(f"Temperature sensor: {message}")
+        self._refresh_tc_tag()
+
+    # ── Safeguard: the kiosk window never grows past the screen ──────────────
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # A window that grows past the screen never shrinks back on its own
+        # (seen once at 1086 px on the 1024 px kiosk) — snap it back. Whole
+        # screen, not availableGeometry(): the window covers the desktop panel.
+        geo = self.screen().geometry()
+        if ((self.width() > geo.width() or self.height() > geo.height())
+                and not getattr(self, "_snap_pending", False)):
+            self._snap_pending = True
+            QTimer.singleShot(0, self._snap_to_screen)
+
+    def _snap_to_screen(self):
+        self._snap_pending = False
+        geo = self.screen().geometry()
+        if self.width() > geo.width() or self.height() > geo.height():
+            self.log_event(f"Window grew to {self.width()}x{self.height()} — "
+                           f"snapped back to the screen {geo.width()}x{geo.height()}")
+            self.setGeometry(geo)
 
     def on_upload_complete(self, success, error_msg):
         """Callback when async upload completes (runs on main thread)."""
+        self._set_db_online(success)
         if success:
             self.log_event("Database upload successful")
             # Server just confirmed reachable — flush any queued records immediately
             pending = self.db_manager.get_pending_count()
             if pending > 0:
                 self.log_event(f"Server reachable — flushing {pending} queued record(s)")
-                self.append_log(f"Server back — uploading {pending} queued record(s)...")
+                self.append_log(tr("log_server_back", n=pending))
                 self.db_manager.retry_pending_uploads()
             # ...and any specs queued while the server was down.
             if self.spec_queue.pending_count() > 0:
@@ -2279,8 +2504,8 @@ class MainWindow(QDialog):
         else:
             self.log_event(f"Database upload failed: {error_msg}")
             count, wait, _ = self.db_manager.get_queue_status()
-            wait_str = f"{int(wait)}s" if wait > 1 else "soon"
-            self.append_log(f"! DB unreachable — {count} queued, retry in {wait_str}")
+            wait_str = tr("wait_seconds", n=int(wait)) if wait > 1 else tr("wait_soon")
+            self.append_log(tr("log_db_unreachable", n=count, wait=wait_str))
 
     def retry_pending_uploads(self):
         """Timer callback — let DBUploadManager decide whether the backoff window has elapsed."""
@@ -2294,21 +2519,31 @@ class MainWindow(QDialog):
         if self.db_manager.should_retry_now() and self.spec_queue.pending_count() > 0:
             self.spec_queue.flush_async()
 
+    def on_upload_rejected(self, count, error_msg):
+        """The server is up but refused record(s) — parked in failed_uploads.json."""
+        self._set_db_online(True)
+        self.log_event(f"DB rejected {count} record(s), moved to "
+                       f"{DBUploadManager.FAILED_FILE}: {error_msg}")
+        self.append_log(tr("log_rejected", n=count, file=DBUploadManager.FAILED_FILE))
+
     def on_retry_complete(self, success_count, failed_count, remaining_count):
         """Callback when a batch retry finishes (runs on main thread)."""
+        self._set_db_online(success_count > 0 or remaining_count == 0)
+        if failed_count == 0 and success_count == 0:
+            return  # every record was rejected and parked — on_upload_rejected reported it
         if remaining_count == 0 and success_count > 0:
             self.log_event(f"Batch upload complete: {success_count} record(s) sent")
-            self.append_log(f"Batch upload done — {success_count} record(s) sent")
+            self.append_log(tr("log_batch_done", n=success_count))
         elif success_count > 0:
             count, wait, _ = self.db_manager.get_queue_status()
-            wait_str = f"{int(wait)}s"
+            wait_str = tr("wait_seconds", n=int(wait))
             self.log_event(f"Partial batch: {success_count} uploaded, {remaining_count} still pending")
-            self.append_log(f"Partial upload: {success_count}✓ — {remaining_count} pending, retry in {wait_str}")
+            self.append_log(tr("log_partial", ok=success_count, left=remaining_count, wait=wait_str))
         else:
             count, wait, _ = self.db_manager.get_queue_status()
-            wait_str = f"{int(wait)}s"
+            wait_str = tr("wait_seconds", n=int(wait))
             self.log_event(f"Batch retry failed — {remaining_count} record(s) still pending")
-            self.append_log(f"! Retry failed — {remaining_count} queued, next in {wait_str}")
+            self.append_log(tr("log_retry_failed", n=remaining_count, wait=wait_str))
 
     def on_upload_now_clicked(self):
         """Force an immediate flush of pending_uploads.json — no timer/backoff wait."""
@@ -2316,13 +2551,13 @@ class MainWindow(QDialog):
         specs = self.spec_queue.pending_count()
         if pending == 0 and specs == 0:
             self.log_event("Upload Now: nothing pending")
-            self.append_log("Upload Now — queue already empty")
+            self.append_log(tr("log_queue_empty"))
             return
         if self.db_manager.is_uploading:
-            self.append_log("Upload Now — an upload is already in progress…")
+            self.append_log(tr("log_upload_busy"))
             return
         self.log_event(f"Upload Now: forcing flush of {pending} reading(s), {specs} spec(s)")
-        self.append_log(f"⬆ Uploading {pending} pending record(s) now…")
+        self.append_log(tr("log_uploading_now", n=pending))
         # force=True bypasses the backoff window; the batch runs off-thread and
         # reports back through on_retry_complete.
         self.db_manager.retry_pending_uploads(force=True)
@@ -2352,6 +2587,7 @@ class MainWindow(QDialog):
         signal that stays fresh even while the meter is unplugged and the app is
         merely waiting to reconnect."""
         self._touch_heartbeat()
+        self._refresh_db_status()   # queue grows silently as readings are queued
         # Release any parked orphan whose OS thread the kernel has finally freed.
         if self._orphaned_threads:
             self._orphaned_threads = [
@@ -2369,7 +2605,7 @@ class MainWindow(QDialog):
         Orphan the (frozen, unkillable) thread and rebuild on a fresh handle."""
         self.log_event(
             f"Serial hardware hang detected (no poll for {age:.1f}s) — reconnecting")
-        self.append_log("⚠ Serial hardware hang — reconnecting…")
+        self.append_log(tr("log_serial_hang"))
         self._set_usb_status("connecting")
 
         # Orphan the wedged worker: signal it to stop (it obeys if/when the kernel
@@ -2472,11 +2708,11 @@ class MainWindow(QDialog):
 
     def closeEvent(self, event):
         self.log_event("Application closing")
+        self.stop_temp_sensor()
         if self.wifi_thread is not None:
             self.wifi_thread.stop()
             self.wifi_thread.wait(3000)
             self.wifi_thread = None
-        self.stop_temp_sensor()
         # Stop poll thread and wait for clean exit before closing the serial port
         if self.poll_thread is not None:
             self.poll_thread.stop()
@@ -2508,41 +2744,53 @@ class MainWindow(QDialog):
             self._media_player.setSource(QUrl.fromLocalFile(path))
             self._media_player.play()
 
-    def _set_measure_zero(self):
-        """Blank the measured value (standby) — the judgement follows to WAITING."""
-        self.ui.doubleSpinBox_Measure.setValue(0.0)
-        self._show_waiting()
-
-    def _show_waiting(self):
-        """Judgement → WAITING while the display reads 0, but only after the last
-        PASS/FAIL has been on screen for JUDGE_MIN_SHOW_S."""
-        if self.ui.doubleSpinBox_Measure.value() != 0.0:
-            return   # a part is already being measured
-        remaining = JUDGE_MIN_SHOW_S - (time.monotonic() - self._judged_at)
-        if remaining > 0:
-            self.waiting_timer.start(int(remaining * 1000) + 1)
-            return
-        self.ui.pushButton_Judgement.setText("WAITING")
-        self.ui.pushButton_Judgement.setStyleSheet(
-            "background-color: #607d8b; color: white; font-weight: bold;")
-
-    def set_judgement_status(self, pass_result):
-        """Update judgement indicator button based on pass/fail result."""
-        judgement_map = {
-            True: ("PASS", "#4CAF50"),      # Green
-            False: ("FAIL", "#f44336"),     # Red
-            None: ("N/A", "#9e9e9e")        # Gray
-        }
-        text, color = judgement_map.get(pass_result, ("N/A", "#9e9e9e"))
-        self.ui.pushButton_Judgement.setText(text)
-        self.ui.pushButton_Judgement.setStyleSheet(f"background-color: {color}; color: white; font-weight: bold;")
-        if pass_result is not None:
-            self._judged_at = time.monotonic()
-            self.waiting_timer.stop()   # a fresh result wins over a pending WAITING
+    def set_judgement_status(self, pass_result, detail=None):
+        """Update the PASS/FAIL banner (and play the voice alert)."""
+        text, state = {True: ("PASS", "pass"), False: ("FAIL", "fail")}.get(
+            pass_result, ("N/A", "na"))
+        self.ui.label_verdict.setText(text)
+        self.ui.label_verdict_detail.setText(detail or "")
+        set_prop(self.ui.frame_verdict, "state", state)
         if pass_result is True:
             self._play_sound("ResistancePass_TH.mp3")
         elif pass_result is False:
             self._play_sound("ResistanceOver_TH.mp3")
+
+    # ── Pass/fail counters (today, current model) ─────────────────────────────
+
+    def _load_counts(self):
+        """Seed today's OK/NG counts for the current model from the daily CSV."""
+        model = self.cleaned_model.strip()
+        today = datetime.now()
+        self._counts_key = (model, today.date())
+        self.counts = {"OK": 0, "NG": 0}
+        path = self.get_daily_csv_path(today)
+        if model and os.path.exists(path):
+            try:
+                with open(path, newline="", encoding="utf-8") as f:
+                    for r in csv.reader(f):
+                        # Model and Status sit at columns 3 and 2 in every layout.
+                        # NG re-measure attempts aren't results; only the final one counts.
+                        if len(r) > 10 and r[10].startswith("reconfirm"):
+                            continue
+                        if len(r) > 3 and r[3].strip() == model and r[2] in self.counts:
+                            self.counts[r[2]] += 1
+            except Exception as e:
+                self.log_event(f"Counter: could not read {os.path.basename(path)}: {e}")
+        self._refresh_counts()
+
+    def _count_result(self, status, model):
+        if self._counts_key != (model, datetime.now().date()):
+            self._load_counts()   # already includes the row just written
+        elif status in self.counts:
+            self.counts[status] += 1
+        self._refresh_counts()
+
+    def _refresh_counts(self):
+        ok, ng = self.counts["OK"], self.counts["NG"]
+        self.ui.label_count_ok.setText(str(ok))
+        self.ui.label_count_ng.setText(str(ng))
+        self.ui.label_count_yield.setText(f"{100.0 * ok / (ok + ng):.1f}%" if ok + ng else "—")
 
     def log_event(self, event_text):
         """Log detailed event to console with timestamp for debugging."""
@@ -2550,17 +2798,40 @@ class MainWindow(QDialog):
         full_msg = f"[{timestamp}] {event_text}"
         print(full_msg)
 
-    def append_log(self, text):
-        """Append a line to the list view logger."""
+    def _log_html(self, html):
         try:
-            items = self.log_model.stringList()
-            items.append(text)
-            if len(items) > 500:
-                items = items[-500:]
-            self.log_model.setStringList(items)
-            self.ui.listView_logger.scrollToBottom()
+            log = self.ui.textBrowser_log
+            bar = log.verticalScrollBar()
+            at_bottom = bar.value() >= bar.maximum() - 4
+            log.append(html)
+            # Don't yank the view while the operator is scrolled back reading.
+            if at_bottom:
+                bar.setValue(bar.maximum())
         except RuntimeError:
             pass  # Widget already destroyed during shutdown
+
+    def append_log(self, text):
+        """Append a system/event line to the data log (warnings in amber)."""
+        c = UI_COLORS
+        colour = c["warn"] if text.startswith(("!", "⚠")) else c["pass"] if text.startswith("✓") else c["dim"]
+        self._log_html(f'<span style="color:{colour}">{escape(text)}</span>')
+
+    def append_result(self, time_str, point, value, pass_result, result_text, note):
+        """Append a recorded reading: time · [point] · value · verdict, then
+        the CSV/DB outcome in small dim text."""
+        c = UI_COLORS
+        colour = {True: c["pass"], False: c["fail"]}.get(pass_result, c["na"])
+        verdict = {True: "OK", False: "NG"}.get(pass_result, "N/A")
+        if pass_result is False and ":" in result_text:
+            verdict += " " + result_text.split(":", 1)[1].strip().lower()   # "NG high"
+        point_html = f'<span style="color:{c["accent_hi"]}">[{escape(point)}]</span> ' if point else ""
+        self.reading_count += 1
+        self.ui.label_log_count.setText(tr("log_count", n=self.reading_count))
+        self._log_html(
+            f'<span style="color:{c["faint"]}">{escape(time_str[:8])}</span> '
+            f'{point_html}<b>{escape(str(value))} Ω</b> '
+            f'<b style="color:{colour}">{verdict}</b><br>'
+            f'<span style="color:{c["faint"]};font-size:small">&nbsp;&nbsp;{escape(note)}</span>')
 
 
 def main():
@@ -2569,7 +2840,8 @@ def main():
         w = MainWindow()
         w.showFullScreen()
     except Exception as e:
-        QMessageBox.critical(None, "Startup Error", f"Failed to initialize application:\n{e}")
+        show_message(None, QMessageBox.Icon.Critical, tr("msg_startup_title"),
+                     tr("msg_startup_body", e=e))
         sys.exit(1)
     sys.exit(app.exec())
 

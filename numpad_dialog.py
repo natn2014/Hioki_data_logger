@@ -5,10 +5,14 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
+from ui_UI_Resistance import C
+from i18n import tr
 
 
 def _screen_scale():
-    screen = QApplication.primaryScreen().availableGeometry()
+    # Whole screen (see main.ui_scale): the available area shrinks while the
+    # on-screen keyboard is up.
+    screen = QApplication.primaryScreen().geometry()
     return min(screen.width() / 1280.0, screen.height() / 800.0, 1.0)
 
 
@@ -58,7 +62,7 @@ class NumpadDialog(QDialog):
         title_lbl = QLabel(title)
         title_lbl.setFont(self._sf(16, bold=True))
         title_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title_lbl.setStyleSheet("color: #ddd;")
+        title_lbl.setStyleSheet(f"color: {C['dim']};")
         outer.addWidget(title_lbl)
 
         self.display = QLabel(self._value_str)
@@ -66,8 +70,8 @@ class NumpadDialog(QDialog):
         self.display.setFont(self._sf(32, bold=True))
         self.display.setMinimumHeight(self._px(72))
         self.display.setStyleSheet(
-            "background-color: #111; color: #00ff88; padding: 8px 16px; "
-            "border-radius: 6px; border: 2px solid #444;"
+            f"background-color: {C['bg']}; color: {C['accent_hi']}; padding: 8px 16px; "
+            f"border-radius: 8px; border: 2px solid {C['accent']};"
         )
         outer.addWidget(self.display)
 
@@ -82,24 +86,24 @@ class NumpadDialog(QDialog):
         ]
         btn_font = self._sf(24, bold=True)
         for lbl, row, col in buttons:
-            btn = QPushButton(lbl)
+            btn = QPushButton('⌫' if lbl == '<' else lbl)
             btn.setFont(btn_font)
             btn.setMinimumSize(self._px(100), self._px(80))
             btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
             if lbl == '<':
                 btn.setStyleSheet(
-                    "QPushButton{background:#c0392b;color:white;border-radius:8px;}"
-                    "QPushButton:pressed{background:#e74c3c;}"
+                    f"QPushButton{{background:{C['fail_deep']};color:{C['fail']};border:1px solid {C['edge']};border-radius:10px;}}"
+                    f"QPushButton:pressed{{background:{C['fail_edge']};}}"
                 )
             elif lbl == '.':
                 btn.setStyleSheet(
-                    "QPushButton{background:#2c3e50;color:white;border-radius:8px;}"
-                    "QPushButton:pressed{background:#34495e;}"
+                    f"QPushButton{{background:{C['panel2']};color:{C['accent_hi']};border:1px solid {C['edge']};border-radius:10px;}}"
+                    f"QPushButton:pressed{{background:{C['accent']};color:{C['bg']};}}"
                 )
             else:
                 btn.setStyleSheet(
-                    "QPushButton{background:#2980b9;color:white;border-radius:8px;}"
-                    "QPushButton:pressed{background:#3498db;}"
+                    f"QPushButton{{background:{C['panel3']};color:{C['ink']};border:1px solid {C['edge']};border-radius:10px;}}"
+                    f"QPushButton:pressed{{background:{C['accent']};color:{C['bg']};}}"
                 )
             btn.clicked.connect(lambda checked, l=lbl: self._on_key(l))
             grid.addWidget(btn, row, col)
@@ -119,19 +123,19 @@ class NumpadDialog(QDialog):
 
         act = QHBoxLayout()
         act.setSpacing(self._px(8))
-        cancel_btn = QPushButton("Cancel")
-        ok_btn = QPushButton("OK")
+        cancel_btn = QPushButton(tr("cancel"))
+        ok_btn = QPushButton(tr("ok"))
         act_font = self._sf(20, bold=True)
         for b in (cancel_btn, ok_btn):
             b.setFont(act_font)
             b.setMinimumHeight(self._px(70))
         cancel_btn.setStyleSheet(
-            "QPushButton{background:#555;color:white;border-radius:8px;}"
-            "QPushButton:pressed{background:#666;}"
+            f"QPushButton{{background:{C['panel2']};color:{C['ink']};border:1px solid {C['edge']};border-radius:10px;}}"
+            f"QPushButton:pressed{{background:{C['panel3']};}}"
         )
         ok_btn.setStyleSheet(
-            "QPushButton{background:#27ae60;color:white;border-radius:8px;}"
-            "QPushButton:pressed{background:#2ecc71;}"
+            f"QPushButton{{background:{C['pass_edge']};color:white;border:1px solid {C['pass']};border-radius:10px;}}"
+            f"QPushButton:pressed{{background:{C['pass']};}}"
         )
         cancel_btn.clicked.connect(self.reject)
         ok_btn.clicked.connect(self._on_ok)
@@ -139,7 +143,7 @@ class NumpadDialog(QDialog):
         act.addWidget(ok_btn)
         outer.addLayout(act)
 
-        self.setStyleSheet("background-color: #1a1a2e;")
+        self.setStyleSheet(f"QDialog{{background-color: {C['panel']}; border: 2px solid {C['edge']};}}")
         self.setMinimumWidth(self._px(360))
 
     def _on_key(self, key):

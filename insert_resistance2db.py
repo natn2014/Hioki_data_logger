@@ -10,6 +10,46 @@ _USERNAME = 'engineering_user'
 _PASSWORD = 'Engineering@user'
 _DRIVER   = '{ODBC Driver 18 for SQL Server}'
 
+# Longest model name accepted from a scan / keyboard. Keep at or below the
+# size of resistance.Model on the server (check_schema() reports the real size).
+# The live ENGINEER_DB column is 30: a 35-char model was refused with
+# "would be truncated ... Truncated value: <30 chars>" (2026-10-24).
+MODEL_MAX_LEN = 30
+
+# SQL Server native errors that mean "this row can never be inserted as-is"
+# (retrying it will fail forever), as opposed to a connection problem.
+_PERMANENT_NATIVE_ERRORS = {
+    2628, 8152,   # string or binary data would be truncated
+    245, 8114,    # conversion failed / error converting data type
+    515,          # cannot insert NULL into a NOT NULL column
+    547,          # constraint conflict
+    2601, 2627,   # duplicate key
+    8115,         # arithmetic overflow
+}
+
+
+def is_data_error(exc):
+    """True when `exc` is a rejection of the record itself, not a connection
+    failure — so the caller should drop/park the record instead of treating the
+    server as down. Looks through the RuntimeError wrappers raised below."""
+    seen = set()
+    e = exc
+    while e is not None and id(e) not in seen:
+        seen.add(id(e))
+        if isinstance(e, (ValueError, pyodbc.DataError, pyodbc.IntegrityError)):
+            return True
+        args = getattr(e, 'args', ())
+        sqlstate = str(args[0]) if args else ''
+        if sqlstate[:2] in ('22', '23'):
+            return True
+        text = ' '.join(str(a) for a in args)
+        if any(f'({code})' in text for code in _PERMANENT_NATIVE_ERRORS):
+            return True
+        if 'would be truncated' in text:
+            return True
+        e = e.__cause__
+    return False
+
 
 def _open_connection(timeout=5):
     """Open an MSSQL connection with a hard deadline enforced off-thread.
@@ -46,29 +86,6 @@ def _open_connection(timeout=5):
     conn = result['conn']
     conn.timeout = timeout  # pyodbc query-level timeout (backup to CommandTimeout)
     return conn
-
-
-# SQL Server errors that retrying can never fix: bad data, not a down server.
-# 2628 / 8152 = "String or binary data would be truncated" (e.g. Model too long).
-_PERMANENT_SQL_ERRORS = ("(2628)", "(8152)")
-
-
-def is_permanent_db_error(exc):
-    """True when the DB refused the *data* (retrying the same record can never
-    succeed), False for connection/timeout problems worth retrying."""
-    while exc is not None:
-        if isinstance(exc, ValueError):
-            return True
-        if isinstance(exc, (pyodbc.DataError, pyodbc.IntegrityError)):
-            return True
-        if isinstance(exc, pyodbc.Error):
-            state = str(exc.args[0]) if exc.args else ""
-            if state.startswith(("22", "23")):
-                return True
-            if any(code in str(exc) for code in _PERMANENT_SQL_ERRORS):
-                return True
-        exc = exc.__cause__
-    return False
 
 
 def insert_to_mssql(model, value, status, point=None, seq=None,
@@ -267,7 +284,7 @@ def check_schema(timeout=5):
     schema is fully migrated.
     """
     result = {"reachable": False, "spec_table": False,
-              "missing_columns": [], "error": None}
+              "missing_columns": [], "error": None, "model_max_len": None}
     try:
         conn = _open_connection(timeout)
     except Exception as e:
@@ -283,10 +300,14 @@ def check_schema(timeout=5):
         result["spec_table"] = cursor.fetchone()[0] > 0
 
         cursor.execute(
-            "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
-            "WHERE TABLE_NAME = 'resistance'"
+            "SELECT COLUMN_NAME, CHARACTER_MAXIMUM_LENGTH "
+            "FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'resistance'"
         )
-        have = {r[0].lower() for r in cursor.fetchall()}
+        cols = cursor.fetchall()
+        have = {r[0].lower() for r in cols}
+        for name, size in cols:
+            if name.lower() == "model" and size and size > 0:
+                result["model_max_len"] = int(size)  # -1 = (MAX), ignored
         result["missing_columns"] = [
             col for col in REQUIRED_RESISTANCE_COLUMNS if col.lower() not in have
         ]

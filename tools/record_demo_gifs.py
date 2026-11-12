@@ -101,6 +101,8 @@ def install_fake_db() -> None:
     fake.fetch_model_spec = fetch_model_spec
     fake.upsert_model_spec = upsert_model_spec
     fake.check_schema = check_schema
+    fake.is_data_error = lambda exc: False
+    fake.MODEL_MAX_LEN = 30
     sys.modules["insert_resistance2db"] = fake
 
 

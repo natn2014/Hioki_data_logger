@@ -2,52 +2,16 @@
 
 A Python GUI application that reads resistance measurements from HIOKI multimeters via USB/RS-232 serial, judges each reading against per-model pass/fail limits, and automatically uploads results to a Microsoft SQL Server database. Designed for manufacturing quality-control kiosks — including a Raspberry Pi 5 touchscreen deployment.
 
-![QC Panel: multi-point measurement with auto-advance and PASS/FAIL judgement](docs/media/qc_panel_demo.gif)
-
-*QC Panel — the 500D sequence (A-B → B-C → D-E) auto-advancing, with a failing part injected
-mid-run. Recorded from the interactive [HIOKI_UI_mockup.html](HIOKI_UI_mockup.html) (simulated
-meter, sensor and database — open it in any browser to try it).*
-
-## How to Use
-
-Each GIF is recorded from the real app on the 1024×768 kiosk screen. The orange circle marks
-each tap, and the caption bar under the screen explains the step.
-
-| Measure a part (multi-point, PASS / FAIL) | Change model (keyboard or barcode) |
-|---|---|
-| ![Measure demo](docs/gifs/measure.gif) | ![Model demo](docs/gifs/model.gif) |
-| Probe each point in order: a stable reading is judged, saved to CSV + DB, and the app moves to the next point card. Object Temperature (top right) is live from the RS485 sensor. | Tap the Model button and type the name, or scan the part barcode with the USB scanner. The model's limits and points load immediately. |
-
-| Point cards | Settings buttons (⚙) |
-|---|---|
-| ![Point cards demo](docs/gifs/points.gif) | ![Settings demo](docs/gifs/settings.gif) |
-| Tap a card to jump to that point. ⚙ → ⟲ Reset to first point restarts the sequence. | ⚙ (bottom right of the judgement) shows or hides the tool buttons: Hold Reading / Release to 0, Upload Now for readings queued while offline. |
-
-| Edit a model's spec | Register a new model |
-|---|---|
-| ![Edit spec demo](docs/gifs/edit_spec.gif) | ![New model demo](docs/gifs/new_model.gif) |
-| ⚙ → ✎ Edit Spec, tap a limit to change it with the numpad, then Save to DB. | ⚙ → ＋ New Model: name (keyboard or barcode), then name / lower / upper for each point, in probing order. Save to DB, then Yes to switch to it. |
-
-| Temperature Correction |
-|---|
-| ![Temperature correction demo](docs/gifs/temperature.gif) |
-| Rt is converted to the standard temperature t₀. Set t₀ / α with the numpad, switch TC ON/OFF, swap the scatter axes, or switch to the histogram of today's readings. |
-
-To re-record the GIFs after a UI change, run
-`DISPLAY=:0 .venv/bin/python tools/record_demo_gifs.py [scene ...]`. The script runs a sandboxed
-copy of the app with a simulated meter, sensor and database. It never touches the production
-config, CSVs, DB or serial ports, so the kiosk service can keep running while it records.
-
 ## Features
 
 - Auto-detects HIOKI devices on available COM ports
+- **Touch-first dark UI for the 10.1" 1280×800 panel** — status chips (USB / Wi-Fi / DB queue), a state-coloured measured value (amber settling → green/red recorded → grey standby) with a tolerance gauge, per-point ✓/✗ cards, a PASS/FAIL banner that names the point and range it was judged on, and today's OK/NG/yield counters. Touch targets are ≥ 56–64 px (~10 mm); lists flick-scroll. Layout lives in [ui_UI_Resistance.py](ui_UI_Resistance.py) (the `.ui` file is no longer the source) and scales down for smaller screens
 - Real-time resistance measurement polling (500 ms interval)
 - **Multi-point spec sequences** — a model can define an ordered list of measurement points (e.g. `A-B = 1–3 Ω`, `B-C = 4–7 Ω`, `D-E = 4–9 Ω`); the app judges each reading against the *current* point's range, records which point it was, then **auto-advances** to the next point and wraps back to point 1 after the last
 - **In-app model registration** — a touchscreen dialog registers a new model or edits an existing spec; on confirm it writes the point sequence to the `resistance_spec` table
 - **Point cards** — tappable cards let the operator jump directly to any point in the sequence (touch-friendly alternative to Prev/Next)
 - **On-screen keyboard & numpad** — full QWERTY keyboard (with a Shift toggle) for model/point names and a numeric keypad for limits; both accept USB barcode-scanner input
-- **Temperature Correction (TC)** — an RS485 ambient-temperature sensor corrects each reading to a standard temperature (`Rt₀ = Rt / (1 + α·(t − t₀))`); per-model t₀/α, PASS/FAIL judged on Rt₀, live chart of the actual vs. standard point
-- **Hold / Release display toggle** — choose whether the big measurement value **holds** the last reading in standby (probes lifted) or **releases to 0**; the choice persists across restarts
+- **Hold / Release display toggle** — choose whether the big measurement value **holds** the last reading in standby (probes lifted) or **releases to WAITING**; either way the status line reads "waiting · open circuit" while the probes are lifted; the choice persists across restarts
 - **Audio feedback** — plays a Thai-language voice alert on every PASS (`ResistancePass_TH.mp3`) or FAIL (`ResistanceOver_TH.mp3`)
 - **Barcode scanner input** — USB HID scanner auto-sets the active model; all entry methods share the same unified decode logic (AIM Code 39 Extended, `$`-delimited, and plain text)
 - **Model change log** (`model_changes.csv`) — audit trail of every model switch; used to auto-recover the last model after a crash or reboot
@@ -84,8 +48,10 @@ sudo apt install python3-serial python3-venv python3-pip \
                  unixodbc-dev libglib2.0-0 libdbus-1-3 libxcb-cursor-dev \
                  gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
                  gstreamer1.0-alsa gstreamer1.0-libav \
-                 x11-xserver-utils xinput
+                 x11-xserver-utils xinput fonts-thai-tlwg
 ```
+
+`fonts-thai-tlwg` provides the Thai glyphs for the TH screen language (check with `fc-list :lang=th`).
 
 > The GStreamer packages are required for `QMediaPlayer` to decode and play MP3 files on Linux.  
 > `x11-xserver-utils` (xrandr) and `xinput` are used to rotate the touchscreen to landscape at startup.
@@ -114,7 +80,7 @@ pip install -r requirements.txt
 Edit [insert_resistance2db.py](insert_resistance2db.py) and update the connection parameters:
 
 ```python
-server   = '172.18.72.16'     # SQL Server IP or hostname
+server   = '---.---.---.---'     # SQL Server IP or hostname
 database = 'ENGINEER_DB'
 username = 'engineering_user'
 password = 'Engineering@user'
@@ -202,9 +168,8 @@ Two keyboard shortcuts let you test the PASS/FAIL sounds without a connected HIO
 |---|---|
 | **Ctrl+P** | Simulate PASS — green button + plays `ResistancePass_TH.mp3` |
 | **Ctrl+F** | Simulate FAIL — red button + plays `ResistanceOver_TH.mp3` |
-| **Ctrl+T** | Type a **simulated ambient temperature** (no sensor attached) — feeds the Temperature Correction tab; goes stale after 10 s like a real reading |
 
-These shortcuts work at any time while the application is running.
+Both shortcuts work at any time while the application is running.
 
 ## Setting the Model
 
@@ -272,12 +237,48 @@ in **standby** (probes lifted, so the meter reports over-range or `OL`):
 
 | Mode | Button | Behavior in standby |
 |---|---|---|
-| **Hold** (default) | `⏸ Hold Reading` | Keeps showing the last measured value |
-| **Release** | `⤓ Release to 0` | Resets the display to `0` |
+| **Hold** (default) | `◼ Hold reading` | Keeps showing the last measured value (dimmed), status "waiting · open circuit · holding last reading" |
+| **Release** | `↧ Release` | Replaces the value with `WAITING`, status "waiting · open circuit" |
 
 A live reading always overwrites the display on the next poll, so switching modes never
 loses a real measurement. The choice is saved in `gui_mode5_config.json` (`hold_previous`)
 and restored on startup.
+
+## Screen Language (TH / EN)
+
+The two small **TH | EN** buttons under the clock switch every on-screen text, popup,
+spec-editor label and new DATA LOG line between Thai (default) and English, live. The
+choice is saved in `gui_mode5_config.json` (`language`: `"th"` or `"en"`). Strings live in
+`i18n.py`. Model names, point names, PASS / FAIL / OK / NG, the on-screen keyboard and
+internal logs (journalctl) stay in English.
+
+## NG Reconfirm
+
+An NG is **not uploaded straight away**. The sequence stays on that point and a red dialog asks the
+operator to probe it again:
+
+- **Re-measure passes** → the dialog closes and only the OK is recorded and uploaded.
+- **Re-measure NG** → the counter steps *Reconfirm NG 1/5 … 5/5*. At 5/5 the NG is confirmed.
+- **✗ Confirm NG** (any time) → the NG is confirmed at once.
+
+A confirmed NG uploads the **last NG value**. Every attempt is still written to the daily CSV, with
+`DB_Status = "reconfirm n/5"`, so nothing is lost. The OK / NG / yield counters and the TC histogram count
+final results only. Tapping another point card, *First point*, or changing the model cancels a pending NG.
+Set `"ng_reconfirm_max"` in `gui_mode5_config.json` to change the 5 (0 turns reconfirm off).
+
+## Waiting Time
+
+When nothing is being measured (Release mode with the probes lifted), the measured value **and** the
+verdict show **WAITING**. That happens only after the last PASS / FAIL has been on screen for the
+waiting time. Set the time with **⚙ → ⏱ Wait … s** (numpad, 0–60 s, default 5 s); it is saved as
+`"waiting_delay_s"`.
+
+## Point Cards
+
+Each card shows its tolerance and that point's **previous measured value** (`▸ 3.312`). The card is
+**green** when that value passed and **red** when it was NG, and it keeps the colour until the point
+is measured again (cleared when the model changes). The **current point blinks**, red while its NG is
+being reconfirmed.
 
 ## Temperature Correction (TC)
 
@@ -285,7 +286,6 @@ The **Temperature Correction** tab converts the resistance measured at the ambie
 temperature into its value at a standard temperature — the same TC function as the HIOKI
 meter, done in the app with an external temperature sensor:
 
-![Temperature Correction tab: live conversion, fixed-axis chart and per-seq histogram](docs/media/temperature_correction_demo.gif)
 
 *TC on while the ambient temperature rises from 22 to 34 °C: the Actual point slides along
 R(T), Rt₀ stays put at t₀ = 20 °C, and each recorded reading joins its seq in the histogram.
@@ -362,7 +362,7 @@ The sensor is an RS485 / Modbus RTU device on UART0 (`/dev/ttyAMA0`), read by
      "raw_at_4ma": 400, "raw_at_20ma": 2000, "temp_at_4ma": 0.0, "temp_at_20ma": 200.0
    }
    ```
-5. Restart the app — the tab's *Object temp t* card should show the live value and `Sensor: connected`.
+5. Restart the app — the *OBJ TEMP* chip and the TC screen's *Object temp t* card should show the live value and `Sensor: connected`.
 
 HIOKI auto-detect **skips the sensor port**, so its `*IDN?` probe never lands on the RS485 bus.
 Without `pymodbus` (e.g. developing on Windows) the app runs normally and the tab shows
@@ -392,10 +392,8 @@ correctly — missing fields insert as `NULL`.
 ├── db_upload_manager.py       # Background upload queue + spec queue with retry
 ├── ui_UI_Resistance.py        # Qt UI code (PySide6)
 ├── UI_Resistance.ui           # Qt Designer UI definition
-├── numpad_dialog.py           # On-screen numeric keypad (limits, ± for TC)
+├── numpad_dialog.py           # On-screen numeric keypad (limit entry)
 ├── keyboard_dialog.py         # On-screen QWERTY keyboard (model/point names)
-├── temp_correction.py         # TC formula + Temperature Correction tab (chart)
-├── rs485_temperature_monitor.py  # RS485/Modbus temperature reader (+ --scan tool)
 │
 ├── migrations/
 │   ├── 001_multipoint_spec.sql  # Create resistance_spec + extend resistance
@@ -411,10 +409,7 @@ correctly — missing fields insert as `NULL`.
 ├── heartbeat.txt              # Liveness heartbeat for the watchdog (auto-created)
 ├── YYYYMMDD.csv               # Daily measurement log (auto-created)
 │
-├── HIOKI_UI_mockup.html       # Interactive UI mockup (QC panel, Register Model, TC)
-├── docs/media/                # README demo GIFs (recorded from the mockup)
-├── docs/gifs/                 # How-to GIFs per function (recorded from the real app)
-├── tools/record_demo_gifs.py  # Re-records docs/gifs/ (sandboxed, simulated meter/sensor/DB)
+├── HIOKI_UI_mockup.html       # Interactive UI mockup (QC panel + Register Model)
 ├── barcodereader.md           # Barcode decode specification
 ├── setup_services.sh          # Raspberry Pi: install services + touch rotation
 ├── hioki-app.service          # Systemd unit — main app
