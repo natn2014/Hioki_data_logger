@@ -363,5 +363,8 @@
     }
   },
   "hold_previous": false,
-  "tc_x_is_temp": true
+  "tc_x_is_temp": true,
+  "language": "en",
+  "waiting_delay_s": 5.0,
+  "ng_reconfirm_max": 5
 }
