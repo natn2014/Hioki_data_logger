@@ -32,7 +32,9 @@ C = {
     "fail": "#ff5d5d", "fail_deep": "#4f1d1f", "fail_edge": "#a33a3a",
     "warn": "#f5b13d", "na": "#74858f",
 }
-MONO = "DejaVu Sans Mono"
+# DejaVu Sans Mono has no Thai glyphs: list Noto Sans Thai (fonts-noto-core)
+# next so Thai text in monospace labels gets a real Thai face, not a random fallback.
+MONO = "DejaVu Sans Mono, Noto Sans Thai"
 # Thai fallbacks: Piboto/Roboto/DejaVu have no Thai glyphs (fonts-thai-tlwg / fonts-noto).
 SANS = "Piboto, Roboto, DejaVu Sans, Noto Sans Thai, Loma, Tlwg Typo, sans-serif"
 
@@ -45,10 +47,16 @@ def build_qss(scale=1.0, lang=None):
     def px(v):
         return max(1, round(v * scale))
     c = C
-    cap_spacing = "0px" if (lang or get_language()) == "th" else "1px"
+    th = (lang or get_language()) == "th"
+    cap_spacing = "0px" if th else "1px"
+
+    def tx(v):
+        """Size for text that is Thai in TH mode: Thai glyphs read ~30% smaller
+        than Latin at the same pixel size, so captions etc. were too small."""
+        return px(v * 1.3) if th else px(v)
     return f"""
 * {{ font-family: {SANS}; }}
-QDialog, QMessageBox {{ background: {c['bg']}; color: {c['ink']}; font-size: {px(17)}px; }}
+QDialog, QMessageBox {{ background: {c['bg']}; color: {c['ink']}; font-size: {tx(17)}px; }}
 QLabel {{ color: {c['ink']}; background: transparent; }}
 QToolTip {{ background: {c['panel3']}; color: {c['ink']}; border: 1px solid {c['edge']}; }}
 
@@ -57,12 +65,12 @@ QFrame[panel="true"] {{
     background: {c['panel']}; border: 1px solid {c['edge']}; border-radius: {px(12)}px;
 }}
 QLabel[role="caption"] {{
-    color: {c['faint']}; font-family: {MONO}; font-size: {px(12)}px; letter-spacing: {cap_spacing};
+    color: {c['faint']}; font-family: {MONO}; font-size: {tx(12)}px; letter-spacing: {cap_spacing};
 }}
-QLabel[role="tag"] {{ color: {c['accent']}; font-family: {MONO}; font-size: {px(12)}px; }}
+QLabel[role="tag"] {{ color: {c['accent']}; font-family: {MONO}; font-size: {tx(12)}px; }}
 
 /* ── status chips (top bar) ─────────────────────────────────────────── */
-QLabel[role="chip"] {{ font-family: {MONO}; font-size: {px(16)}px; font-weight: bold; }}
+QLabel[role="chip"] {{ font-family: {MONO}; font-size: {tx(18)}px; font-weight: bold; }}
 QLabel[role="chip"][state="ok"]   {{ color: {c['pass']}; }}
 QLabel[role="chip"][state="warn"] {{ color: {c['warn']}; }}
 QLabel[role="chip"][state="bad"]  {{ color: {c['fail']}; }}
@@ -86,7 +94,7 @@ QLabel#label_model_name[empty="true"] {{ color: {c['warn']}; }}
 
 /* ── measured value ─────────────────────────────────────────────────── */
 QLabel#label_probe_point {{ font-family: {MONO}; font-size: {px(30)}px; font-weight: bold; color: {c['accent_hi']}; }}
-QLabel#label_point_index {{ font-family: {MONO}; font-size: {px(17)}px; color: {c['dim']}; }}
+QLabel#label_point_index {{ font-family: {MONO}; font-size: {tx(17)}px; color: {c['dim']}; }}
 QLabel#label_measure_value {{ font-family: {MONO}; font-weight: bold; }}
 QLabel#label_measure_value[state="idle"]     {{ color: {c['faint']}; }}
 QLabel#label_measure_value[state="settling"] {{ color: {c['warn']}; }}
@@ -95,7 +103,7 @@ QLabel#label_measure_value[state="pass"]     {{ color: {c['pass']}; }}
 QLabel#label_measure_value[state="fail"]     {{ color: {c['fail']}; }}
 QLabel#label_measure_value[state="standby"]  {{ color: {c['dim']}; }}
 QLabel#label_unit {{ font-family: {MONO}; font-size: {px(44)}px; color: {c['dim']}; }}
-QLabel#label_measure_status {{ font-family: {MONO}; font-size: {px(16)}px; color: {c['dim']}; }}
+QLabel#label_measure_status {{ font-family: {MONO}; font-size: {tx(16)}px; color: {c['dim']}; }}
 
 /* ── limit tiles ────────────────────────────────────────────────────── */
 QPushButton[role="limit"] {{
@@ -121,13 +129,13 @@ QPushButton[role="card"][active="true"][alarm="true"][blink="true"] {{ backgroun
 QPushButton[role="card"]:pressed {{ background: {c['panel3']}; }}
 QLabel[role="card_name"]  {{ font-family: {MONO}; font-size: {px(22)}px; font-weight: bold; color: {c['ink']}; }}
 QLabel[role="card_range"] {{ font-family: {MONO}; font-size: {px(15)}px; color: {c['dim']}; }}
-QLabel[role="card_mark"]  {{ font-family: {MONO}; font-size: {px(15)}px; font-weight: bold; color: {c['faint']}; }}
+QLabel[role="card_mark"]  {{ font-family: {MONO}; font-size: {tx(15)}px; font-weight: bold; color: {c['faint']}; }}
 QLabel[role="card_mark"][result="pass"] {{ color: {c['pass']}; }}
 QLabel[role="card_mark"][result="fail"] {{ color: {c['fail']}; }}
 QLabel[role="card_value"] {{ font-family: {MONO}; font-size: {px(17)}px; font-weight: bold; color: {c['faint']}; }}
 QLabel[role="card_value"][result="pass"] {{ color: {c['pass']}; }}
 QLabel[role="card_value"][result="fail"] {{ color: {c['fail']}; }}
-QLabel#label_single_hint {{ color: {c['dim']}; font-size: {px(16)}px; }}
+QLabel#label_single_hint {{ color: {c['dim']}; font-size: {tx(16)}px; }}
 
 /* ── verdict ────────────────────────────────────────────────────────── */
 QFrame#frame_verdict {{ border-radius: {px(14)}px; border: 2px solid {c['edge']}; background: {c['panel2']}; }}
@@ -137,7 +145,7 @@ QLabel#label_verdict {{ font-family: {MONO}; font-size: {px(76)}px; font-weight:
 QFrame#frame_verdict[state="pass"] QLabel {{ color: {c['pass']}; }}
 QFrame#frame_verdict[state="fail"] QLabel {{ color: {c['fail']}; }}
 QFrame#frame_verdict[state="na"] QLabel   {{ color: {c['na']}; }}
-QLabel#label_verdict_detail {{ font-family: {MONO}; font-size: {px(18)}px; color: {c['dim']}; }}
+QLabel#label_verdict_detail {{ font-family: {MONO}; font-size: {tx(18)}px; color: {c['dim']}; }}
 QPushButton#btn_settings {{
     background: {c['panel3']}; color: {c['ink']}; border: 1px solid {c['edge']};
     border-radius: {px(10)}px; font-size: {px(26)}px; padding: 0;
@@ -146,10 +154,10 @@ QPushButton#btn_settings:checked {{ background: #17394a; border: 2px solid {c['a
 
 /* ── NG reconfirm dialog ────────────────────────────────────────────── */
 QDialog#NgReconfirmDialog {{ background: {c['fail_deep']}; border: {px(3)}px solid {c['fail']}; border-radius: {px(14)}px; }}
-QLabel#ng_title  {{ font-family: {MONO}; font-size: {px(30)}px; font-weight: bold; color: {c['fail']}; }}
+QLabel#ng_title  {{ font-family: {MONO}; font-size: {tx(30)}px; font-weight: bold; color: {c['fail']}; }}
 QLabel#ng_value  {{ font-family: {MONO}; font-size: {px(22)}px; color: {c['ink']}; }}
 QLabel#ng_count  {{ font-family: {MONO}; font-size: {px(40)}px; font-weight: bold; color: {c['warn']}; }}
-QLabel#ng_hint   {{ font-size: {px(17)}px; color: {c['dim']}; }}
+QLabel#ng_hint   {{ font-size: {tx(17)}px; color: {c['dim']}; }}
 
 /* ── buttons ──────────────────────────────────────────────────────────
    Only buttons with a role (plus message-box buttons) get the base look, so
@@ -157,7 +165,7 @@ QLabel#ng_hint   {{ font-size: {px(17)}px; color: {c['dim']}; }}
 QPushButton[role="tool"], QPushButton[role="dlg"], QPushButton[role="primary"],
 QPushButton[role="danger"], QMessageBox QPushButton {{
     background: {c['panel2']}; color: {c['ink']}; border: 1px solid {c['edge']};
-    border-radius: {px(10)}px; font-size: {px(17)}px; font-weight: bold;
+    border-radius: {px(10)}px; font-size: {tx(17)}px; font-weight: bold;
     min-height: {px(56)}px; min-width: {px(110)}px; padding: 0 {px(14)}px;
 }}
 QPushButton[role="tool"]:pressed, QPushButton[role="dlg"]:pressed,
@@ -173,7 +181,7 @@ QPushButton[role="danger"] {{ background: {c['fail_deep']}; border-color: {c['fa
 /* ── data log ───────────────────────────────────────────────────────── */
 QTextBrowser#textBrowser_log {{
     background: {c['panel']}; border: none; color: {c['ink']};
-    font-family: {MONO}; font-size: {px(14)}px;
+    font-family: {MONO}; font-size: {tx(14)}px;
 }}
 QLabel[role="count"] {{ font-family: {MONO}; font-size: {px(26)}px; font-weight: bold; }}
 QLabel[role="count"][state="ok"]  {{ color: {c['pass']}; }}
@@ -460,21 +468,24 @@ class Ui_Dialog(object):
         root.setSpacing(gap)
         self.rootLayout = root
 
-        # ── Top bar: status chips · model · clock ────────────────────────────
+        # ── Row 1: status chips (equal width) · clock ────────────────────────
+        # Row 2 is the model card, at the top of the measurement column (see
+        # below); both rows share BAR_H so the two read as one header.
+        bar_h = px(72)
         top = QHBoxLayout()
         top.setSpacing(gap)
         self.frame_usb, self.label_usb_status, self.cap_usb = self._chip(Dialog, "", "label_usb_status")
         self.frame_wifi, self.label_wifi, self.cap_wifi = self._chip(Dialog, "", "label_wifi")
         self.frame_db, self.label_db, self.cap_db = self._chip(Dialog, "", "label_db")
         self.frame_temp, self.label_temp, self.cap_temp = self._chip(Dialog, "", "label_temp")
-        for f, w in ((self.frame_usb, 190), (self.frame_wifi, 170), (self.frame_db, 190),
-                     (self.frame_temp, 150)):
-            f.setFixedWidth(px(w))
-            top.addWidget(f)
+        for f in (self.frame_usb, self.frame_wifi, self.frame_db, self.frame_temp):
+            f.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+            top.addWidget(f, 1)
 
         self.pushButton_model = QPushButton(Dialog)
         self.pushButton_model.setObjectName(u"pushButton_model")
-        self.pushButton_model.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
+        self.pushButton_model.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.pushButton_model.setFixedHeight(bar_h)
         model_lay = QHBoxLayout(self.pushButton_model)
         model_lay.setContentsMargins(px(18), px(4), px(18), px(4))
         model_lay.setSpacing(px(14))
@@ -484,13 +495,12 @@ class Ui_Dialog(object):
         self.label_model_hint = _caption("")
         model_cap.addWidget(self.label_model_hint)
         model_lay.addLayout(model_cap)
-        self.label_model_name = FitLabel("Model", max_px=px(40), min_px=px(14))
+        self.label_model_name = FitLabel("Model", max_px=px(30), min_px=px(14))
         self.label_model_name.setObjectName(u"label_model_name")
         self.label_model_name.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         model_lay.addWidget(self.label_model_name, 1)
         for w in self.pushButton_model.findChildren(QWidget):
             w.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        top.addWidget(self.pushButton_model, 1)
 
         self.frame_clock = _panel(Dialog)
         clock_lay = QVBoxLayout(self.frame_clock)
@@ -518,7 +528,7 @@ class Ui_Dialog(object):
         top_w = QWidget(Dialog)
         top_w.setLayout(top)
         top.setContentsMargins(0, 0, 0, 0)
-        top_w.setFixedHeight(px(80))
+        top_w.setFixedHeight(bar_h)
         root.addWidget(top_w)
 
         # ── Body: measurement column | data log ──────────────────────────────
@@ -529,6 +539,7 @@ class Ui_Dialog(object):
         left.setSpacing(gap)
         body.addLayout(left, 1)
         self.verticalLayout = left
+        left.addWidget(self.pushButton_model)   # row 2: model, as wide as the column
 
         # Measured panel + limit tiles
         meas_row = QHBoxLayout()
@@ -591,7 +602,7 @@ class Ui_Dialog(object):
         self.point_cards_area.setObjectName(u"point_cards_area")
         self.point_cards_area.setWidgetResizable(True)
         self.point_cards_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.point_cards_area.setFixedHeight(px(100))
+        self.point_cards_area.setFixedHeight(px(200))   # 2x: room for name, tolerance and previous value
         host = QWidget()
         host.setObjectName(u"point_cards_host")
         self.point_cards_row = QHBoxLayout(host)

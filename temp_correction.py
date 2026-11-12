@@ -680,7 +680,9 @@ class TempCorrectionTab(QWidget):
             bottom = [b + c for b, c in zip(bottom, counts)]
             top = max(top, max(bottom))
         ax.set_ylim(0, top * 1.45 + 1)          # headroom for the legend
-        leg = ax.legend(loc="upper right", fontsize=8, frameon=True, framealpha=0.9,
-                        edgecolor=GRID)
+        # Dark legend box: matplotlib's default is white, which put the light
+        # theme text (TEXT_PRIMARY) on white — unreadable.
+        leg = ax.legend(loc="upper right", fontsize=8, frameon=True, framealpha=0.92,
+                        facecolor=_UI["panel2"], edgecolor=GRID)
         for txt in leg.get_texts():
             txt.set_color(TEXT_PRIMARY)

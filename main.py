@@ -1036,8 +1036,8 @@ class MainWindow(QDialog):
     def _set_model_text(self, text):
         self._cancel_reconfirm()
         self.point_results = {}
+        set_prop(self.ui.label_model_name, "empty", not text)   # before sizing (see _show_reading)
         self.ui.label_model_name.setText(text if text else tr("model_placeholder"))
-        set_prop(self.ui.label_model_name, "empty", not text)
         # A previous model's PASS/FAIL must not linger under the new name.
         self.ui.label_verdict.setText("— — —")
         self.ui.label_verdict_detail.setText(tr("verdict_no_reading_model"))
@@ -1083,6 +1083,9 @@ class MainWindow(QDialog):
         sequence has advanced to the next point.
         """
         lbl = self.ui.label_measure_value
+        # Colour first: re-polishing the stylesheet resets the font, so the
+        # FitLabel must size the text afterwards (else a PASS/FAIL shrank it).
+        set_prop(lbl, "state", state)
         if value is None:
             lbl.setText("-.---")
         else:
@@ -1090,7 +1093,6 @@ class MainWindow(QDialog):
                 lbl.setText(f"{float(value):.3f}")
             except (TypeError, ValueError):
                 lbl.setText(str(value))
-        set_prop(lbl, "state", state)
         self.ui.label_measure_status.setText(status)
         try:
             num = float(value) if value is not None else None
@@ -1530,7 +1532,7 @@ class MainWindow(QDialog):
             )
             # Up to 4 cards share the row; more scroll sideways (drag/flick).
             card.setMinimumWidth(round(190 * self.ui.scale))
-            card.setMinimumHeight(round(88 * self.ui.scale))
+            card.setMinimumHeight(round(176 * self.ui.scale))
             card.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             card.clicked.connect(
                 lambda _checked=False, idx=i: self.on_point_card_tapped(idx))
