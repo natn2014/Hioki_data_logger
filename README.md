@@ -2,6 +2,13 @@
 
 A Python GUI application that reads resistance measurements from HIOKI multimeters via USB/RS-232 serial, judges each reading against per-model pass/fail limits, and automatically uploads results to a Microsoft SQL Server database. Designed for manufacturing quality-control kiosks — including a Raspberry Pi 5 touchscreen deployment.
 
+![Checking one part on the kiosk screen: A-B PASS, B-C FAIL, D-E PASS](docs/media/kiosk_checking_demo.gif)
+
+*Kiosk screen — checking one 500D part in Thai: A-B passes, B-C reads 7.550 Ω above its
+4.00–7.00 Ω spec and fails, D-E passes. Recorded from the interactive
+[HIOKI_kiosk_mockup.html](HIOKI_kiosk_mockup.html) (TH | EN switch, simulated meter, scanner and
+database — open it in any browser; add `?demo=1` to replay this sequence).*
+
 ## Features
 
 - Auto-detects HIOKI devices on available COM ports
@@ -410,6 +417,7 @@ correctly — missing fields insert as `NULL`.
 ├── YYYYMMDD.csv               # Daily measurement log (auto-created)
 │
 ├── HIOKI_UI_mockup.html       # Interactive UI mockup (QC panel + Register Model)
+├── HIOKI_kiosk_mockup.html    # Interactive kiosk-screen mockup (TH | EN, ?demo=1)
 ├── barcodereader.md           # Barcode decode specification
 ├── setup_services.sh          # Raspberry Pi: install services + touch rotation
 ├── hioki-app.service          # Systemd unit — main app

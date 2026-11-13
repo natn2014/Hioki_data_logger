@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<!-- Interactive mockup of the HIOKI resistance QC kiosk (10.1" 1280x800 touch panel).
+     Self-contained: open directly in any browser. The meter, barcode scanner and
+     database are simulated in-page — no hardware or database required.
+     Mirrors main.py / ui_UI_Resistance.py / i18n.py on the MSW branch:
+     Thai by default with the TH | EN switch, point cards, PASS/FAIL, DB queue.
+     ?demo=1 plays the scripted checking demo on load (used to record the GIF).
+     On MSW-RS485TC this file is a copy of HIOKI_UI_mockup.html from MSW; the
+     tabbed QC / Temperature Correction mockup stays in HIOKI_UI_mockup.html. -->
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HIOKI QC Kiosk</title>
+<style>
+  :root {
+    --bg:#0b1015; --panel:#121a21; --panel2:#18232c; --panel3:#1e2c37;
+    --edge:#26363f; --edge-soft:#1c2831;
+    --ink:#e7eff3; --dim:#8ba1ad; --faint:#5f7481;
+    --accent:#19b7d4; --accent-hi:#46d2ec;
+    --pass:#2ecc71; --pass-deep:#14472c; --pass-edge:#1f7a48;
+    --fail:#ff5d5d; --fail-deep:#4f1d1f; --fail-edge:#a33a3a;
+    --warn:#f5b13d; --na:#74858f;
+    --mono: "DejaVu Sans Mono", ui-monospace, Consolas, "Noto Sans Thai", "Leelawadee UI", Tahoma, monospace;
+    --sans: Roboto, "DejaVu Sans", "Segoe UI", "Noto Sans Thai", "Leelawadee UI", Tahoma, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #05080b; color: var(--ink); font-family: var(--sans); }
+  body { padding: 16px; }
+  button { font-family: inherit; color: inherit; cursor: pointer; }
+
+  .page { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+  .page-head { display: flex; align-items: baseline; gap: 12px; margin: 0 0 12px; flex-wrap: wrap; }
+  .page-head h1 { font-size: 18px; margin: 0; }
+  .page-head .sub { color: var(--dim); font-size: 13px; }
+
+  /* ── device: exactly 1280x800, scaled down to fit narrow windows ───────── */
+  .device-wrap { width: 1280px; max-width: 100%; }
+  .device {
+    width: 1280px; height: 800px; background: var(--bg); padding: 14px;
+    display: flex; flex-direction: column; gap: 12px; position: relative;
+    transform-origin: top left; overflow: hidden; border-radius: 6px;
+    box-shadow: 0 0 0 1px #1a242c, 0 12px 40px rgba(0,0,0,.5);
+  }
+  .panel { background: var(--panel); border: 1px solid var(--edge); border-radius: 12px; }
+  .cap { color: var(--faint); font-family: var(--mono); font-size: 12px; letter-spacing: 1px; }
+  html[lang="th"] .cap { letter-spacing: 0; }
+
+  /* top bar */
+  .top { display: flex; gap: 12px; height: 80px; flex: none; }
+  .chip { padding: 8px 14px; display: flex; flex-direction: column; justify-content: center; gap: 4px; }
+  .chip .v { font-family: var(--mono); font-size: 16px; font-weight: bold; white-space: nowrap; }
+  .ok { color: var(--pass); } .warn { color: var(--warn); } .bad { color: var(--fail); } .off { color: var(--na); }
+  .model {
+    flex: 1; display: flex; align-items: center; gap: 14px; padding: 4px 18px; text-align: left;
+    background: var(--panel); border: 1px solid var(--edge); border-radius: 12px; min-width: 0;
+  }
+  .model:active { background: var(--panel3); border-color: var(--accent); }
+  .model .caps { display: flex; flex-direction: column; gap: 14px; }
+  .model .name { flex: 1; text-align: right; font-family: var(--mono); font-weight: bold; font-size: 40px;
+                 white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .model .name.empty { color: var(--warn); font-size: 26px; }
+  .clock { width: 140px; padding: 4px 8px 6px; display: flex; flex-direction: column; gap: 2px; }
+  .clock .t { flex: 1; display: flex; align-items: center; justify-content: center;
+              font-family: var(--mono); font-size: 22px; font-weight: bold; }
+  .langs { display: flex; gap: 4px; }
+  .lang { flex: 1; height: 28px; border-radius: 6px; border: 1px solid var(--edge); background: var(--panel2);
+          color: var(--faint); font-family: var(--mono); font-size: 13px; font-weight: bold; }
+  .lang.on { background: #17394a; border-color: var(--accent); color: var(--accent-hi); }
+
+  /* body */
+  .body { flex: 1; display: flex; gap: 12px; min-height: 0; }
+  .left { flex: 1; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .meas-row { flex: 1; display: flex; gap: 12px; min-height: 0; }
+  .measure { flex: 1; padding: 12px 20px 10px; display: flex; flex-direction: column; min-width: 0; }
+  .measure .head { display: flex; align-items: center; gap: 8px; }
+  .measure .pt { font-family: var(--mono); font-size: 30px; font-weight: bold; color: var(--accent-hi); }
+  .measure .idx { margin-left: auto; font-family: var(--mono); font-size: 17px; color: var(--dim); }
+  .value-row { flex: 1; display: flex; align-items: center; justify-content: flex-end; gap: 8px; min-height: 0; }
+  .value { font-family: var(--mono); font-weight: bold; font-size: 150px; line-height: 1; transition: color .15s; }
+  .value.idle { color: var(--faint); } .value.settling { color: var(--warn); } .value.stable { color: var(--ink); }
+  .value.pass { color: var(--pass); } .value.fail { color: var(--fail); } .value.standby { color: var(--dim); }
+  .value.word { font-size: 110px; }
+  .unit { font-family: var(--mono); font-size: 44px; color: var(--dim); align-self: flex-end; margin-bottom: 24px; width: 34px; }
+  .gauge { position: relative; height: 40px; margin: 4px 12px 0; }
+  .gauge .track { position: absolute; left: 0; right: 0; top: 4px; height: 14px; border-radius: 7px; background: var(--panel3); }
+  .gauge .band { position: absolute; top: 4px; height: 14px; background: #1f7a48; }
+  .gauge .tick { position: absolute; top: 24px; font-family: var(--mono); font-size: 13px; color: var(--dim); transform: translateX(-50%); }
+  .gauge .mark { position: absolute; top: 0; width: 2px; height: 22px; background: var(--ink); transform: translateX(-1px); transition: left .2s; }
+  .gauge .mark::after { content: ""; position: absolute; left: -6px; top: 20px; border: 7px solid transparent; border-bottom: 9px solid; border-top: 0; border-bottom-color: inherit; }
+  .gauge .mark.pass { background: var(--pass); border-color: var(--pass); }
+  .gauge .mark.fail { background: var(--fail); border-color: var(--fail); }
+  .gauge .mark.settling { background: var(--warn); border-color: var(--warn); }
+  .gauge .mark.stable, .gauge .mark.standby { background: var(--ink); border-color: var(--ink); }
+  .gauge .mark.hidden { display: none; }
+  .mstatus { text-align: center; font-family: var(--mono); font-size: 16px; color: var(--dim); min-height: 22px; white-space: nowrap; overflow: hidden; }
+
+  .limits { width: 240px; display: flex; flex-direction: column; gap: 12px; }
+  .limit { flex: 1; padding: 10px 16px; display: flex; flex-direction: column; text-align: left; }
+  .limit .h { display: flex; justify-content: space-between; }
+  .limit .tag { color: var(--accent); font-family: var(--mono); font-size: 12px; }
+  .limit .v { flex: 1; display: flex; align-items: center; justify-content: flex-end;
+              font-family: var(--mono); font-size: 46px; font-weight: bold; }
+
+  .cards { height: 100px; display: flex; gap: 12px; overflow-x: auto; flex: none; }
+  .card { flex: 1; min-width: 190px; height: 88px; padding: 10px 14px; text-align: left;
+          background: var(--panel); border: 1px solid var(--edge); border-radius: 10px;
+          display: flex; flex-direction: column; justify-content: space-between; }
+  .card.active { background: #12323b; border: 3px solid var(--accent); }
+  .card .r1 { display: flex; justify-content: space-between; align-items: baseline; }
+  .card .nm { font-family: var(--mono); font-size: 22px; font-weight: bold; }
+  .card .mk { font-family: var(--mono); font-size: 15px; font-weight: bold; color: var(--faint); }
+  .card .mk.pass { color: var(--pass); } .card .mk.fail { color: var(--fail); }
+  .card .rg { font-family: var(--mono); font-size: 15px; color: var(--dim); }
+
+  .verdict { height: 132px; flex: none; border-radius: 14px; border: 2px solid var(--edge); background: var(--panel2);
+             display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 4px 16px 8px; }
+  .verdict .w { font-family: var(--mono); font-size: 76px; font-weight: bold; letter-spacing: 8px; color: var(--faint); line-height: 1.1; }
+  .verdict .d { font-family: var(--mono); font-size: 18px; color: var(--dim); }
+  .verdict.pass { background: var(--pass-deep); border-color: var(--pass-edge); }
+  .verdict.pass .w, .verdict.pass .d { color: var(--pass); }
+  .verdict.fail { background: var(--fail-deep); border-color: var(--fail-edge); }
+  .verdict.fail .w, .verdict.fail .d { color: var(--fail); }
+
+  .tools { display: flex; gap: 12px; flex: none; }
+  .tool { flex: 1; height: 64px; border-radius: 10px; border: 1px solid var(--edge); background: var(--panel2);
+          font-size: 17px; font-weight: bold; white-space: nowrap; overflow: hidden; }
+  .tool:active { background: var(--panel3); border-color: var(--accent); }
+  .tool:disabled { color: var(--faint); background: var(--panel); border-color: var(--edge-soft); }
+  .tool.attention { border: 2px solid var(--warn); color: var(--warn); }
+  .tool.checked { background: #17394a; border: 2px solid var(--accent); color: var(--accent-hi); }
+
+  .logp { width: 360px; padding: 12px 8px 10px 14px; display: flex; flex-direction: column; gap: 8px; }
+  .counts { display: flex; gap: 10px; }
+  .counts > div { flex: 1; }
+  .count { font-family: var(--mono); font-size: 26px; font-weight: bold; }
+  .sep { height: 1px; background: var(--edge); }
+  .loghead { display: flex; justify-content: space-between; padding-right: 6px; }
+  .log { flex: 1; overflow-y: auto; font-family: var(--mono); font-size: 14px; line-height: 1.35; padding-right: 6px; }
+  .log .ln { margin-bottom: 3px; color: var(--dim); }
+  .log .ln.w { color: var(--warn); } .log .ln.g { color: var(--pass); }
+  .log .t { color: var(--faint); } .log .p { color: var(--accent-hi); } .log b { color: var(--ink); }
+  .log .ok { color: var(--pass); font-weight: bold; } .log .ng { color: var(--fail); font-weight: bold; }
+  .log .note { color: var(--faint); font-size: 12px; padding-left: 14px; }
+
+  /* spec editor (modal on the device) */
+  .modal-bg { position: absolute; inset: 0; background: rgba(0,0,0,.55); display: none; align-items: center; justify-content: center; }
+  .modal-bg.open { display: flex; }
+  .modal { width: 1080px; height: 700px; background: var(--bg); border: 1px solid var(--edge); border-radius: 12px;
+           padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; }
+  .modal input { background: var(--panel2); color: var(--ink); border: 1px solid var(--edge); border-radius: 8px;
+                 height: 56px; padding: 0 10px; font-family: var(--mono); font-size: 20px; }
+  .modal input:focus { outline: none; border: 2px solid var(--accent); }
+  .modal .rowh { display: flex; align-items: center; justify-content: space-between; }
+  .rows { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+  .prow { display: flex; align-items: center; gap: 10px; }
+  .prow .sq { width: 36px; text-align: center; font-size: 22px; font-weight: bold; color: var(--accent-hi); }
+  .prow .nmi { flex: 1; }
+  .prow .num { width: 180px; text-align: right; }
+  .dlg { height: 64px; min-width: 200px; border-radius: 10px; border: 1px solid var(--edge); background: var(--panel2);
+         font-size: 17px; font-weight: bold; padding: 0 14px; }
+  .dlg.small { height: 56px; min-width: 110px; }
+  .dlg.primary { background: var(--pass-edge); border-color: var(--pass); }
+  .dlg.danger { min-width: 64px; width: 64px; height: 56px; background: var(--fail-deep); border-color: var(--fail-edge); color: var(--fail); }
+  .err { color: var(--fail); font-weight: bold; font-size: 18px; min-height: 24px; }
+  .btnrow { display: flex; justify-content: space-between; }
+
+  /* ── simulator sidebar (not part of the device) ────────────────────────── */
+  .sim { width: 330px; display: flex; flex-direction: column; gap: 12px; font-size: 14px; }
+  .sim .blk { background: #0e151b; border: 1px solid #1f2c35; border-radius: 10px; padding: 12px; }
+  .sim h2 { font-size: 12px; margin: 0 0 10px; color: var(--dim); font-family: var(--mono); letter-spacing: 1px; }
+  .sim .tagx { color: var(--accent); }
+  .sbtn { width: 100%; padding: 10px; margin-bottom: 8px; border-radius: 8px; border: 1px solid var(--edge);
+          background: var(--panel2); font-weight: bold; font-size: 14px; }
+  .sbtn.go { background: var(--pass-edge); border-color: var(--pass); }
+  .sbtn.half { width: calc(50% - 4px); }
+  .pair { display: flex; gap: 8px; }
+  .tline { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; color: var(--ink); }
+  .tline small { display: block; color: var(--faint); font-size: 12px; }
+  .sw { position: relative; width: 44px; height: 24px; flex: none; }
+  .sw input { opacity: 0; width: 0; height: 0; }
+  .sw span { position: absolute; inset: 0; border-radius: 12px; background: #2b3a44; transition: .15s; }
+  .sw span::after { content: ""; position: absolute; left: 3px; top: 3px; width: 18px; height: 18px; border-radius: 50%; background: #cfd9de; transition: .15s; }
+  .sw input:checked + span { background: var(--pass-edge); }
+  .sw input:checked + span::after { left: 23px; }
+  .feed { height: 140px; overflow-y: auto; font-family: var(--mono); font-size: 12px; color: var(--dim); background: #091015; border-radius: 6px; padding: 6px 8px; }
+  .feed div { white-space: nowrap; }
+  .metrics { display: flex; gap: 8px; margin-top: 6px; }
+  .metrics div { flex: 1; background: #091015; border-radius: 6px; padding: 6px 8px; }
+  .metrics b { display: block; font-family: var(--mono); font-size: 20px; }
+  .hint { color: var(--faint); font-size: 12px; margin: 8px 0 0; line-height: 1.4; }
+
+  @media (max-width: 1320px) { .sim { width: 100%; } }
+  body.capture { padding: 0; background: var(--bg); }
+  body.capture .page-head, body.capture .sim { display: none; }
+  body.capture .device { border-radius: 0; box-shadow: none; }
+</style>
+</head>
+<body>
+<div class="page-head">
+  <h1>HIOKI QC Kiosk — interactive mockup</h1>
+  <span class="sub">10.1" 1280×800 touch panel · simulated meter, scanner &amp; database · matches the MSW app</span>
+</div>
+
+<div class="page">
+  <div class="device-wrap" id="deviceWrap">
+  <section class="device" id="device" aria-label="Device screen">
+    <!-- top bar -->
+    <div class="top">
+      <div class="panel chip" style="width:190px"><span class="cap" data-t="chip_usb"></span><span class="v" id="usb"></span></div>
+      <div class="panel chip" style="width:180px"><span class="cap" data-t="chip_wifi"></span><span class="v ok" id="wifi">▂▄▆█ 82%</span></div>
+      <div class="panel chip" style="width:200px"><span class="cap" data-t="chip_db"></span><span class="v" id="db"></span></div>
+      <button class="model" id="modelBtn" type="button">
+        <span class="caps"><span class="cap" data-t="cap_model"></span><span class="cap" data-t="model_hint"></span></span>
+        <span class="name" id="modelName"></span>
+      </button>
+      <div class="panel clock">
+        <div class="t" id="clock">--:--</div>
+        <div class="langs">
+          <button class="lang" id="langTh" type="button">TH</button>
+          <button class="lang" id="langEn" type="button">EN</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="body">
+      <div class="left">
+        <div class="meas-row">
+          <div class="panel measure">
+            <div class="head"><span class="cap" id="probeCap"></span><span class="pt" id="probePt">—</span><span class="idx" id="probeIdx"></span></div>
+            <div class="value-row"><span class="value idle" id="value">-.---</span><span class="unit" id="unit"></span></div>
+            <div class="gauge" id="gauge">
+              <div class="track"></div><div class="band" id="band"></div>
+              <span class="tick" id="tickLo"></span><span class="tick" id="tickHi"></span>
+              <div class="mark hidden" id="mark"></div>
+            </div>
+            <div class="mstatus" id="mstatus"></div>
+          </div>
+          <div class="limits">
+            <div class="panel limit"><div class="h"><span class="cap" data-t="cap_upper_limit"></span><span class="tag" data-t="tag_locked"></span></div><div class="v" id="upper">0.00</div></div>
+            <div class="panel limit"><div class="h"><span class="cap" data-t="cap_lower_limit"></span><span class="tag" data-t="tag_locked"></span></div><div class="v" id="lower">0.00</div></div>
+          </div>
+        </div>
+        <div class="cards" id="cards"></div>
+        <div class="verdict" id="verdict"><div class="w" id="vWord">— — —</div><div class="d" id="vDetail"></div></div>
+        <div class="tools">
+          <button class="tool" id="btnFirst" type="button" data-t="btn_first_point"></button>
+          <button class="tool" id="btnNew" type="button" data-t="btn_new_model"></button>
+          <button class="tool" id="btnEdit" type="button" data-t="btn_edit_spec"></button>
+          <button class="tool" id="btnUpload" type="button"></button>
+          <button class="tool checked" id="btnHold" type="button"></button>
+        </div>
+      </div>
+
+      <div class="panel logp">
+        <div class="counts">
+          <div><div class="cap">OK</div><div class="count ok" id="cOk">0</div></div>
+          <div><div class="cap">NG</div><div class="count bad" id="cNg">0</div></div>
+          <div><div class="cap" data-t="cap_yield"></div><div class="count" id="cYield">—</div></div>
+        </div>
+        <div class="cap" data-t="counts_scope"></div>
+        <div class="sep"></div>
+        <div class="loghead"><span class="cap" data-t="cap_data_log"></span><span class="cap" id="logCount"></span></div>
+        <div class="log" id="log"></div>
+      </div>
+    </div>
+
+    <!-- spec editor -->
+    <div class="modal-bg" id="specBg">
+      <div class="modal">
+        <div class="cap" data-t="spec_model_caption"></div>
+        <input id="specModel" maxlength="100">
+        <div class="rowh"><span class="cap" data-t="spec_points_caption"></span>
+          <button class="dlg small" id="specAdd" type="button" data-t="spec_add_point"></button></div>
+        <div class="rows" id="specRows"></div>
+        <div class="err" id="specErr"></div>
+        <div class="btnrow">
+          <button class="dlg" id="specCancel" type="button" data-t="cancel"></button>
+          <button class="dlg primary" id="specSave" type="button" data-t="spec_save"></button>
+        </div>
+      </div>
+    </div>
+  </section>
+  </div>
+
+  <!-- simulator -->
+  <aside class="sim" aria-label="Simulator">
+    <div class="blk">
+      <h2><span class="tagx">SIM</span> · probe the part</h2>
+      <button class="sbtn go" id="simDemo" type="button">▶ Play checking demo</button>
+      <div class="pair">
+        <button class="sbtn half" id="simPass" type="button">Probe · in spec</button>
+        <button class="sbtn half" id="simFail" type="button">Probe · out of spec</button>
+      </div>
+      <div class="tline"><span>Meter link (USB)<small>*IDN? → HIOKI RM3544</small></span><label class="sw"><input type="checkbox" id="swUsb" checked><span></span></label></div>
+      <div class="tline"><span>Database uplink<small>ENGINEER_DB · resistance</small></span><label class="sw"><input type="checkbox" id="swDb" checked><span></span></label></div>
+      <div class="metrics"><div>Rows inserted<b id="mRows">0</b></div><div>Queued<b id="mQueue">0</b></div></div>
+    </div>
+    <div class="blk">
+      <h2><span class="tagx">SCAN</span> · barcode scanner</h2>
+      <div class="pair">
+        <button class="sbtn half" id="scanModel" type="button">Scan "$500D$"</button>
+        <button class="sbtn half" id="scanQr" type="button">Scan TISI QR</button>
+      </div>
+      <p class="hint">A URL / QR link (e.g. https://ppdb.tisi.go.th/…) is ignored and the current model stays.</p>
+    </div>
+    <div class="blk">
+      <h2><span class="tagx">RS-232C</span> · meter feed (FETC?)</h2>
+      <div class="feed" id="feed"></div>
+    </div>
+    <div class="blk">
+      <h2><span class="tagx">SQL</span> · database</h2>
+      <div class="feed" id="dbfeed"></div>
+      <p class="hint">Turn the uplink off: readings queue (DB chip turns red), then tap
+        <b>⬆ Upload</b> or turn it back on to flush.</p>
+    </div>
+  </aside>
+</div>
+
+<script>
+// ── strings: same keys and text as i18n.py ─────────────────────────────────
+const S = {
+  chip_usb: ["USB · METER", "USB · เครื่องวัด"], chip_wifi: ["WI-FI · UPLINK", "WI-FI · สัญญาณ"],
+  chip_db: ["DATABASE", "ฐานข้อมูล"], cap_model: ["MODEL", "รุ่นงาน"], model_hint: ["tap or scan ▸", "แตะ หรือ สแกน ▸"],
+  model_placeholder: ["Tap to set model", "แตะเพื่อตั้งรุ่นงาน"],
+  usb_connected: ["● Connected", "● เชื่อมต่อแล้ว"], usb_disconnected: ["○ Disconnected", "○ ไม่ได้เชื่อมต่อ"],
+  db_online: ["● Online", "● ออนไลน์"], db_offline_n: ["○ Offline · {n}", "○ ออฟไลน์ · {n}"],
+  db_offline: ["○ Offline", "○ ออฟไลน์"], db_queued: ["⬆ {n} queued", "⬆ รอส่ง {n}"],
+  cap_probe: ["PROBE", "จุดวัด"], point_index: ["point {i} / {n}", "จุด {i} / {n}"],
+  cap_upper_limit: ["UPPER LIMIT", "สเปคสูงสุด"], cap_lower_limit: ["LOWER LIMIT", "สเปคต่ำสุด"], tag_locked: ["LOCKED", "ล็อก"],
+  status_disconnected: ["meter disconnected — check the USB cable", "ไม่พบเครื่องวัด — ตรวจสาย USB"],
+  status_ready: ["ready", "พร้อมวัด"], probe_hint: [" · probe {name}", " · วัดจุด {name}"],
+  status_waiting_open: ["waiting · open circuit", "รอวัด · วงจรเปิด"], status_holding: [" · holding last reading", " · ค้างค่าล่าสุด"],
+  status_settling: ["settling…", "กำลังนิ่ง… ถือโพรบค้างไว้"], status_stable: ["stable · recording…", "ค่านิ่ง · กำลังบันทึก…"],
+  status_recorded: ["recorded {where}{verdict}", "บันทึก {where}{verdict}"], status_next: ["  →  next: {name}", "  →  ถัดไป: {name}"],
+  verdict_no_reading_model: ["no reading yet for this model", "ยังไม่มีผลการวัดของรุ่นนี้"],
+  btn_first_point: ["⟲  First point", "⟲  จุดแรก"], btn_new_model: ["＋  New model", "＋  รุ่นใหม่"],
+  btn_edit_spec: ["✎  Edit spec", "✎  แก้ไขสเปค"], btn_upload_now: ["⬆  Upload now", "⬆  ส่งข้อมูล"],
+  btn_upload_n: ["⬆  Upload ({n})", "⬆  ส่งข้อมูล ({n})"], btn_hold: ["◼  Hold reading", "◼  ค้างค่า"], btn_release: ["↧  Release", "↧  ปล่อยค่า"],
+  cap_yield: ["YIELD", "% ผ่าน"], counts_scope: ["TODAY · THIS MODEL", "วันนี้ · รุ่นนี้"],
+  cap_data_log: ["DATA LOG", "บันทึกข้อมูล"], log_count: ["{n} READINGS", "{n} รายการ"],
+  csv_ok: ["(CSV: ✓)", "(CSV: ✓)"], db_uploading: ["(DB: Uploading...)", "(DB: กำลังส่ง...)"],
+  log_auto_hold: ["Auto Hold enabled. Polling FETC?...", "เปิด Auto Hold แล้ว เริ่มอ่านค่าจากเครื่องวัด..."],
+  log_db_unreachable: ["! DB unreachable — {n} queued, retry in {wait}", "! ติดต่อฐานข้อมูลไม่ได้ — รอส่ง {n} รายการ ลองใหม่ใน {wait}"],
+  wait_seconds: ["{n}s", "{n} วินาที"],
+  log_batch_done: ["Batch upload done — {n} record(s) sent", "ส่งข้อมูลที่ค้างครบแล้ว — {n} รายการ"],
+  log_queue_empty: ["Upload Now — queue already empty", "ส่งข้อมูล — ไม่มีข้อมูลค้าง"],
+  log_uploading_now: ["⬆ Uploading {n} pending record(s) now…", "⬆ กำลังส่งข้อมูลที่ค้าง {n} รายการ…"],
+  log_barcode_ignored: ["Barcode ignored — that is a URL/QR link, not a model label", "ไม่รับบาร์โค้ด — เป็นลิงก์ URL/QR ไม่ใช่ชื่อรุ่น"],
+  log_model_by_barcode: ["Model set via barcode: {model}", "ตั้งรุ่นจากบาร์โค้ด: {model}"],
+  log_display_mode: ["Display mode → {mode}", "โหมดแสดงค่า → {mode}"],
+  mode_hold: ["hold last reading", "ค้างค่าล่าสุด"], mode_release: ["release (show WAITING)", "ปล่อยค่า (แสดง WAITING)"],
+  log_point_selected: ["Point → {name} ({lo}–{hi} Ω)", "จุดวัด → {name} ({lo}–{hi} Ω)"],
+  log_spec_saved: ["✓ Spec saved: {model} ({n} points)", "✓ บันทึกสเปคแล้ว: {model} ({n} จุด)"],
+  card_seq: ["seq {n}", "ลำดับ {n}"], cancel: ["Cancel", "ยกเลิก"],
+  spec_model_caption: ["MODEL NAME  ·  tap to type, or scan the part barcode", "ชื่อรุ่น  ·  แตะเพื่อพิมพ์ หรือสแกนบาร์โค้ดชิ้นงาน"],
+  spec_points_caption: ["MEASUREMENT POINTS  ·  probed in this order  ·  tap a value to edit", "จุดวัด  ·  เรียงตามลำดับการวัด  ·  แตะค่าเพื่อแก้ไข"],
+  spec_add_point: ["＋  Add point", "＋  เพิ่มจุดวัด"], spec_save: ["✓  Save to DB", "✓  บันทึกลงฐานข้อมูล"],
+  spec_lower: ["LOWER", "ต่ำสุด"], spec_upper: ["UPPER", "สูงสุด"],
+  err_model_required: ["model name is required", "ต้องใส่ชื่อรุ่น"], err_add_point: ["add at least one measurement point", "ต้องมีจุดวัดอย่างน้อย 1 จุด"],
+  err_point_name: ["point {i}: name is required", "จุดที่ {i}: ต้องใส่ชื่อจุด"],
+  err_point_dup: ["point {i}: duplicate name '{name}'", "จุดที่ {i}: ชื่อ '{name}' ซ้ำ"],
+  err_lower_upper: ["point {i} ({name}): lower must be < upper", "จุดที่ {i} ({name}): ค่าต่ำสุดต้องน้อยกว่าค่าสูงสุด"],
+};
+let lang = "th";
+const tr = (k, f = {}) => (S[k] ? S[k][lang === "th" ? 1 : 0] : k).replace(/\{(\w+)\}/g, (_, n) => f[n] ?? "");
+const $ = id => document.getElementById(id);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const f2 = v => v.toFixed(2), f3 = v => v.toFixed(3);
+const hhmmss = () => new Date().toTimeString().slice(0, 8);
+
+// ── state ──────────────────────────────────────────────────────────────────
+const st = {
+  model: "500D",
+  points: [{ name: "A-B", lower: 1.0, upper: 3.0 }, { name: "B-C", lower: 4.0, upper: 7.0 }, { name: "D-E", lower: 4.0, upper: 9.0 }],
+  idx: 0, cycle: {}, ok: 0, ng: 0, readings: 0,
+  hold: true, usb: true, dbOnline: true, queue: [], rows: 0,
+  display: null, displayRange: null, valueState: "idle", busy: false, recordedAt: 0,
+};
+const cur = () => st.points[st.idx] || null;
+
+// ── rendering ──────────────────────────────────────────────────────────────
+function applyLang(code) {
+  lang = code;
+  document.documentElement.lang = code;
+  document.querySelectorAll("[data-t]").forEach(el => { el.textContent = tr(el.dataset.t); });
+  $("langTh").classList.toggle("on", code === "th");
+  $("langEn").classList.toggle("on", code === "en");
+  renderAll();
+}
+function renderTop() {
+  $("usb").textContent = tr(st.usb ? "usb_connected" : "usb_disconnected");
+  $("usb").className = "v " + (st.usb ? "ok" : "bad");
+  const q = st.queue.length;
+  let txt, cls;
+  if (!st.dbOnline) { txt = q ? tr("db_offline_n", { n: q }) : tr("db_offline"); cls = "bad"; }
+  else if (q) { txt = tr("db_queued", { n: q }); cls = "warn"; }
+  else { txt = tr("db_online"); cls = "ok"; }
+  $("db").textContent = txt; $("db").className = "v " + cls;
+  $("btnUpload").textContent = q ? tr("btn_upload_n", { n: q }) : tr("btn_upload_now");
+  $("btnUpload").classList.toggle("attention", q > 0);
+  $("btnHold").textContent = tr(st.hold ? "btn_hold" : "btn_release");
+  $("btnHold").classList.toggle("checked", st.hold);
+  const m = $("modelName");
+  m.textContent = st.model || tr("model_placeholder");
+  m.classList.toggle("empty", !st.model);
+  $("mRows").textContent = st.rows; $("mQueue").textContent = q;
+}
+function renderPoint() {
+  const p = cur();
+  $("probeCap").textContent = tr("cap_probe");
+  $("probePt").textContent = p ? p.name : "—";
+  $("probeIdx").textContent = p ? tr("point_index", { i: st.idx + 1, n: st.points.length }) : "";
+  $("upper").textContent = p ? f2(p.upper) : "0.00";
+  $("lower").textContent = p ? f2(p.lower) : "0.00";
+  $("cards").innerHTML = st.points.map((pt, i) => {
+    const r = st.cycle[i];
+    const mk = r ? `<span class="mk ${r.pass ? "pass" : "fail"}">${r.pass ? "✓" : "✗"} ${r.text}</span>`
+                 : `<span class="mk">${tr("card_seq", { n: i + 1 })}</span>`;
+    return `<button class="card ${i === st.idx ? "active" : ""}" data-i="${i}" type="button">
+      <div class="r1"><span class="nm">${esc(pt.name)}</span>${mk}</div>
+      <div class="rg">${f2(pt.lower)} – ${f2(pt.upper)} Ω</div></button>`;
+  }).join("");
+}
+function renderCounts() {
+  $("cOk").textContent = st.ok; $("cNg").textContent = st.ng;
+  $("cYield").textContent = st.ok + st.ng ? (100 * st.ok / (st.ok + st.ng)).toFixed(1) + "%" : "—";
+  $("logCount").textContent = tr("log_count", { n: st.readings });
+}
+function showReading(state, value, status, lo, hi) {
+  st.valueState = state;
+  const v = $("value");
+  const num = typeof value === "number" ? value : null;
+  v.textContent = value == null ? "-.---" : (num != null ? f3(num) : value);
+  v.className = "value " + state + (value != null && num == null ? " word" : "");
+  $("unit").textContent = num != null ? "Ω" : "";
+  $("mstatus").textContent = status;
+  const p = cur();
+  lo = lo ?? (p ? p.lower : 0); hi = hi ?? (p ? p.upper : 1);
+  const span = hi - lo, min = lo - span * 0.5, max = hi + span * 0.5;
+  const pos = x => Math.max(0, Math.min(100, (x - min) / (max - min) * 100));
+  $("band").style.left = pos(lo) + "%"; $("band").style.width = (pos(hi) - pos(lo)) + "%";
+  $("tickLo").style.left = pos(lo) + "%"; $("tickLo").textContent = f2(lo);
+  $("tickHi").style.left = pos(hi) + "%"; $("tickHi").textContent = f2(hi);
+  const mk = $("mark");
+  mk.className = "mark " + (num == null || state === "idle" ? "hidden" : state);
+  if (num != null) mk.style.left = pos(num) + "%";
+}
+function probeHint() { const p = cur(); return p ? tr("probe_hint", { name: p.name }) : ""; }
+function showReady() {
+  showReading("idle", null, st.usb ? tr("status_ready") + probeHint() : tr("status_disconnected"));
+}
+function showWaiting() {
+  const s = tr("status_waiting_open") + probeHint();
+  if (st.hold && st.display != null) showReading("standby", st.display, s + tr("status_holding"), ...st.displayRange);
+  else showReading("standby", "WAITING", s);
+}
+function setVerdict(pass, detail) {
+  $("verdict").className = "verdict" + (pass == null ? "" : pass ? " pass" : " fail");
+  $("vWord").textContent = pass == null ? "— — —" : pass ? "PASS" : "FAIL";
+  $("vDetail").textContent = detail;
+}
+function renderAll() {
+  renderTop(); renderPoint(); renderCounts();
+  if (st.valueState === "idle") showReady();
+  else if (st.valueState === "standby") showWaiting();
+  if ($("verdict").className === "verdict") $("vDetail").textContent = tr("verdict_no_reading_model");
+}
+
+// ── data log ───────────────────────────────────────────────────────────────
+function logLine(text) {
+  const cls = /^[!⚠]/.test(text) ? "w" : text.startsWith("✓") ? "g" : "";
+  addLog(`<div class="ln ${cls}">${esc(text)}</div>`);
+}
+function logResult(point, value, pass, side, note) {
+  const verdict = pass ? `<span class="ok">OK</span>` : `<span class="ng">NG ${side}</span>`;
+  addLog(`<div class="ln"><span class="t">${hhmmss()}</span> <span class="p">[${esc(point)}]</span> <b>${f3(value)} Ω</b> ${verdict}
+          <div class="note">${esc(note)}</div></div>`);
+}
+function addLog(html) { const l = $("log"); l.insertAdjacentHTML("beforeend", html); l.scrollTop = l.scrollHeight; }
+function feed(id, html) { const f = $(id); f.insertAdjacentHTML("beforeend", `<div>${html}</div>`); f.scrollTop = f.scrollHeight; }
+
+// ── database (simulated DBUploadManager) ───────────────────────────────────
+function upload(row) {
+  if (st.dbOnline) {
+    st.rows++;
+    feed("dbfeed", `INSERT resistance (${esc(row.model)}, ${f3(row.value)}, ${row.status}, ${esc(row.point)}, seq ${row.seq}) <span style="color:var(--pass)">OK</span>`);
+  } else {
+    st.queue.push(row);
+    feed("dbfeed", `<span style="color:var(--warn)">server unreachable → queued (${st.queue.length})</span>`);
+    logLine(tr("log_db_unreachable", { n: st.queue.length, wait: tr("wait_seconds", { n: 10 }) }));
+  }
+  renderTop();
+}
+function flushQueue(manual) {
+  const n = st.queue.length;
+  if (!n) { if (manual) logLine(tr("log_queue_empty")); return; }
+  if (!st.dbOnline) return;
+  if (manual) logLine(tr("log_uploading_now", { n }));
+  st.queue.splice(0).forEach(r => { st.rows++; feed("dbfeed", `INSERT (queued) ${esc(r.model)} ${esc(r.point)} ${f3(r.value)} <span style="color:var(--pass)">OK</span>`); });
+  logLine(tr("log_batch_done", { n }));
+  renderTop();
+}
+
+// ── measurement (mirrors on_fetch_result: 2 equal reads → record) ──────────
+async function probe(value, { settleMs = 450 } = {}) {
+  const p = cur();
+  if (!p || !st.usb || st.busy || !st.model) return;
+  st.busy = true;
+  const reads = [value + 0.041, value + 0.012, value, value];
+  for (let i = 0; i < reads.length; i++) {
+    feed("feed", `FETC? → ${reads[i].toExponential(5).toUpperCase()}`);
+    if (i < 3) showReading("settling", reads[i], tr("status_settling"));
+    else showReading("stable", reads[i], tr("status_stable"));
+    await sleep(i < 3 ? settleMs : 350);
+  }
+  record(value, p);
+  st.busy = false;
+}
+function record(value, p) {
+  const pass = value >= p.lower && value <= p.upper;
+  const side = value > p.upper ? "high" : "low";
+  const where = p.name + " · ";
+  st.readings++; pass ? st.ok++ : st.ng++;
+  if (st.idx === 0) st.cycle = {};
+  st.cycle[st.idx] = { pass, text: f3(value) };
+  upload({ model: st.model, value, status: pass ? "OK" : "NG", point: p.name, seq: st.idx + 1 });
+  logResult(p.name, value, pass, side, `${tr("csv_ok")} ${tr("db_uploading")}`);
+  setVerdict(pass, `${where}${f3(value)} Ω  (${f2(p.lower)} – ${f2(p.upper)})  ·  ${hhmmss()}`);
+  st.idx = (st.idx + 1) % st.points.length;   // auto-advance (wraps to point 1)
+  st.display = value; st.displayRange = [p.lower, p.upper]; st.recordedAt = Date.now();
+  renderPoint(); renderCounts();
+  showReading(pass ? "pass" : "fail", value,
+    tr("status_recorded", { where, verdict: pass ? "PASS" : "FAIL" }) + tr("status_next", { name: cur().name }),
+    p.lower, p.upper);
+}
+async function liftProbe() {
+  feed("feed", `FETC? → +9.99999E+37 <span style="color:var(--faint)">(OL)</span>`);
+  if (!st.hold) await sleep(Math.max(0, 3000 - (Date.now() - st.recordedAt)));
+  showWaiting();
+}
+function inSpec(p) { return +(p.lower + (p.upper - p.lower) * (0.3 + Math.random() * 0.4)).toFixed(3); }
+function outSpec(p) { return +(p.upper + (p.upper - p.lower) * (0.1 + Math.random() * 0.15)).toFixed(3); }
+
+// ── barcode scanner ────────────────────────────────────────────────────────
+function isIgnoredScan(t) {
+  t = (t || "").trim().toLowerCase();
+  return !!t && (/^(https?:\/\/|www\.)/.test(t) || t.includes(":/") || t.includes("tisi.go.th") || t.includes("ppdb.") || t.length > 50);
+}
+function scan(raw) {
+  if (isIgnoredScan(raw)) { logLine(tr("log_barcode_ignored")); return; }
+  const m = raw.match(/\$([^$]*)\$?/); const model = (m ? m[1] : raw).trim();
+  st.model = model; st.idx = 0; st.cycle = {}; st.ok = st.ng = 0;
+  setVerdict(null, tr("verdict_no_reading_model"));
+  logLine(tr("log_model_by_barcode", { model }));
+  renderAll(); showReady();
+}
+
+// ── spec editor ────────────────────────────────────────────────────────────
+function openSpec(blank) {
+  $("specModel").value = blank ? "" : st.model;
+  $("specRows").innerHTML = "";
+  (blank ? [{ name: "", lower: 0, upper: 0 }] : st.points).forEach(addSpecRow);
+  $("specErr").textContent = "";
+  $("specBg").classList.add("open");
+}
+function addSpecRow(p) {
+  const rows = $("specRows"), n = rows.children.length + 1;
+  rows.insertAdjacentHTML("beforeend", `<div class="prow"><span class="sq">${n}</span>
+    <input class="nmi" value="${esc(p.name)}" placeholder="A-B" maxlength="50">
+    <span class="cap">${tr("spec_lower")}</span><input class="num lo" type="number" step="0.01" value="${f2(p.lower)}">
+    <span class="cap">${tr("spec_upper")}</span><input class="num hi" type="number" step="0.01" value="${f2(p.upper)}">
+    <button class="dlg danger" type="button">✕</button></div>`);
+}
+function saveSpec() {
+  const model = $("specModel").value.trim();
+  const rows = [...$("specRows").children];
+  const err = e => { $("specErr").textContent = "✕ " + e; };
+  if (!model) return err(tr("err_model_required"));
+  if (!rows.length) return err(tr("err_add_point"));
+  const pts = [], seen = new Set();
+  for (let i = 0; i < rows.length; i++) {
+    const name = rows[i].querySelector(".nmi").value.trim();
+    const lo = +rows[i].querySelector(".lo").value, hi = +rows[i].querySelector(".hi").value;
+    if (!name) return err(tr("err_point_name", { i: i + 1 }));
+    if (seen.has(name.toLowerCase())) return err(tr("err_point_dup", { i: i + 1, name }));
+    if (lo >= hi) return err(tr("err_lower_upper", { i: i + 1, name }));
+    seen.add(name.toLowerCase()); pts.push({ name, lower: lo, upper: hi });
+  }
+  st.model = model; st.points = pts; st.idx = 0; st.cycle = {};
+  $("specBg").classList.remove("open");
+  feed("dbfeed", `DELETE+INSERT resistance_spec (${esc(model)}, ${pts.length} points) <span style="color:var(--pass)">OK</span>`);
+  logLine(tr("log_spec_saved", { model, n: pts.length }));
+  renderAll(); showReady();
+}
+
+// ── scripted checking demo (recorded as the GIF) ───────────────────────────
+async function runDemo() {
+  if (st.busy) return;
+  st.idx = 0; st.cycle = {}; renderPoint(); showReady(); await sleep(1200);
+  const plan = [2.196, 7.550, 6.420];   // A-B PASS · B-C FAIL (high) · D-E PASS
+  for (const v of plan) {
+    await probe(v);
+    await sleep(1500);
+    await liftProbe();
+    await sleep(1100);
+  }
+  await sleep(800);
+}
+window.runDemo = runDemo;
+
+// ── wiring ─────────────────────────────────────────────────────────────────
+$("langTh").onclick = () => applyLang("th");
+$("langEn").onclick = () => applyLang("en");
+$("cards").onclick = e => {
+  const c = e.target.closest(".card"); if (!c || st.busy) return;
+  st.idx = +c.dataset.i; const p = cur();
+  logLine(tr("log_point_selected", { name: p.name, lo: f2(p.lower), hi: f2(p.upper) }));
+  renderPoint(); if (st.valueState === "idle" || st.valueState === "standby") showReady();
+};
+$("btnFirst").onclick = () => { st.idx = 0; renderPoint(); showReady(); };
+$("btnHold").onclick = () => {
+  st.hold = !st.hold;
+  logLine(tr("log_display_mode", { mode: tr(st.hold ? "mode_hold" : "mode_release") }));
+  renderTop(); if (st.valueState === "standby") showWaiting();
+};
+$("btnUpload").onclick = () => flushQueue(true);
+$("btnNew").onclick = () => openSpec(true);
+$("btnEdit").onclick = () => openSpec(false);
+$("modelBtn").onclick = () => openSpec(false);
+$("specAdd").onclick = () => addSpecRow({ name: "", lower: 0, upper: 0 });
+$("specRows").onclick = e => {
+  if (!e.target.classList.contains("danger")) return;
+  e.target.closest(".prow").remove();
+  [...$("specRows").children].forEach((r, i) => { r.querySelector(".sq").textContent = i + 1; });
+};
+$("specCancel").onclick = () => $("specBg").classList.remove("open");
+$("specSave").onclick = saveSpec;
+$("simDemo").onclick = runDemo;
+$("simPass").onclick = async () => { const p = cur(); if (p) { await probe(inSpec(p)); await sleep(1200); await liftProbe(); } };
+$("simFail").onclick = async () => { const p = cur(); if (p) { await probe(outSpec(p)); await sleep(1200); await liftProbe(); } };
+$("swUsb").onchange = e => { st.usb = e.target.checked; renderTop(); showReady(); };
+$("swDb").onchange = e => { st.dbOnline = e.target.checked; renderTop(); if (st.dbOnline) flushQueue(false); };
+$("scanModel").onclick = () => scan("$500D$");
+$("scanQr").onclick = () => scan("https://ppdb.tisi.go.th/public/?d=SRG01-WS-000123");
+
+function tick() { $("clock").textContent = new Date().toTimeString().slice(0, 5); }
+setInterval(tick, 1000); tick();
+
+// scale the 1280x800 device down on narrow windows (never up)
+function fit() {
+  const w = $("deviceWrap").clientWidth, s = Math.min(1, w / 1280);
+  $("device").style.transform = s < 1 ? `scale(${s})` : "";
+  $("deviceWrap").style.height = 800 * s + "px";
+}
+addEventListener("resize", fit);
+
+const params = new URLSearchParams(location.search);
+if (params.get("capture")) document.body.classList.add("capture");
+applyLang(params.get("lang") === "en" ? "en" : "th");
+setVerdict(null, tr("verdict_no_reading_model"));
+logLine(tr("log_auto_hold"));
+fit(); showReady();
+if (params.get("demo")) runDemo();
+</script>
+</body>
+</html>
