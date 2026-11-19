@@ -374,14 +374,16 @@
 sudo systemctl restart hioki-app
 ```
 
-**อัปเดตโปรแกรม:**
+**อัปเดตโปรแกรม** (เก็บข้อมูลในเครื่องไว้ทั้งหมด: รุ่นปัจจุบัน, สเปค, ข้อมูลรอส่ง, CSV รายวัน):
 
 ```bash
 cd /home/pi/Hioki_data_logger
-sudo systemctl stop hioki-app
-git pull origin MSW
-sudo systemctl start hioki-app
+bash update_pi.sh                    # ถ้าเครื่องยังไม่มีไฟล์นี้ ให้ใช้คำสั่งด้านล่าง
+# curl -fsSL https://raw.githubusercontent.com/natn2014/Hioki_data_logger/MSW-RS485TC/update_pi.sh -o /tmp/update_pi.sh && bash /tmp/update_pi.sh
 ```
+
+สคริปต์จะหยุดโปรแกรม → สำรองไฟล์ข้อมูลไว้ที่ `~/hioki_backup_วันที่_เวลา` → ดึงโค้ดใหม่ → คืนไฟล์ข้อมูลของเครื่อง
+→ ติดตั้งแพ็กเกจ (รวมไดรเวอร์ไฟสัญญาณ) → เปิดโปรแกรมใหม่ ถ้าขึ้นให้รีบูต ให้สั่ง `sudo reboot` 1 ครั้ง
 
 **ไฟล์สำคัญ** (ในโฟลเดอร์ `/home/pi/Hioki_data_logger`)
 
