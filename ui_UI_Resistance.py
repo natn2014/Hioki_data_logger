@@ -171,6 +171,8 @@ QPushButton[role="danger"], QMessageBox QPushButton {{
 QPushButton[role="tool"]:pressed, QPushButton[role="dlg"]:pressed,
 QMessageBox QPushButton:pressed {{ background: {c['panel3']}; border-color: {c['accent']}; }}
 QPushButton[role="tool"]:disabled, QPushButton[role="dlg"]:disabled {{ color: {c['faint']}; background: {c['panel']}; border-color: {c['edge_soft']}; }}
+QPushButton[role="dlg"]:checked {{ background: #17394a; border: 2px solid {c['accent']}; color: {c['accent_hi']}; }}
+QPushButton[role="dlg"]:checked:disabled {{ background: {c['panel']}; border: 1px solid {c['edge_soft']}; color: {c['faint']}; }}
 QPushButton[role="tool"] {{ min-height: {px(64)}px; }}
 QPushButton[role="tool"][attention="true"] {{ border: 2px solid {c['warn']}; color: {c['warn']}; }}
 QPushButton#btn_hold_toggle:checked {{ background: #17394a; border: 2px solid {c['accent']}; color: {c['accent_hi']}; }}
@@ -644,7 +646,7 @@ class Ui_Dialog(object):
         left.addWidget(self.frame_verdict)
 
         # Tool buttons
-        # Two rows (4 + 3): seven buttons at their touch-size minimum don't fit
+        # Two rows (4 + 4): eight buttons at their touch-size minimum don't fit
         # one row beside the data log on the 1024 px kiosk.
         self.tools_widget = QWidget(Dialog)
         self.tools_row = QGridLayout(self.tools_widget)
@@ -659,9 +661,10 @@ class Ui_Dialog(object):
         self.btn_hold_toggle.setCheckable(True)
         self.btn_waiting = QPushButton("")      # waiting delay (numpad)
         self.btn_tc = QPushButton("")           # opens the Temperature Correction screen
+        self.btn_tower = QPushButton("")        # PATLITE tower light settings
         for i, b in enumerate((self.btn_reset_point, self.btn_new_model, self.btn_edit_spec,
                                self.btn_upload_now, self.btn_hold_toggle, self.btn_waiting,
-                               self.btn_tc)):
+                               self.btn_tc, self.btn_tower)):
             b.setProperty("role", "tool")
             b.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
             b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -729,6 +732,7 @@ class Ui_Dialog(object):
         self.cap_db.setText(tr("chip_db"))
         self.cap_temp.setText(tr("chip_temp"))
         self.btn_tc.setText(tr("btn_tc"))
+        self.btn_tower.setText(tr("btn_tower"))
         self.cap_model.setText(tr("cap_model"))
         self.label_model_hint.setText(tr("model_hint"))
         self.btn_upper.caption.setText(tr("cap_upper_limit"))

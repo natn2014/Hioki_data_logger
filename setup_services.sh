@@ -87,8 +87,27 @@ apt-get install -y --no-install-recommends \
     gstreamer1.0-alsa \
     gstreamer1.0-libav \
     x11-xserver-utils \
-    xinput
+    xinput \
+    libhidapi-hidraw0 \
+    libhidapi-libusb0 \
+    libusb-1.0-0
 echo ">> System packages installed."
+
+# ── PATLITE LR6-USB tower light: USB access without root ─────────────────────
+# The udev rule gives group plugdev access to the tower (VID 191a, PID 8003).
+# Optional hardware: the app runs normally when no tower is plugged in.
+echo ""
+echo ">> Tower light (PATLITE LR6-USB) access"
+TOWER_RULE="/etc/udev/rules.d/99-patlite-lr6.rules"
+if [ -f "$APP_DIR/deploy/99-patlite-lr6.rules" ]; then
+    install -m 644 "$APP_DIR/deploy/99-patlite-lr6.rules" "$TOWER_RULE"
+    udevadm control --reload-rules
+    udevadm trigger
+    usermod -aG plugdev "$APP_USER"
+    ok "udev rule installed, $APP_USER in plugdev (unplug / replug the tower once)"
+else
+    warn "deploy/99-patlite-lr6.rules not found — tower light needs root access"
+fi
 
 # ── Install Microsoft ODBC Driver 18 for SQL Server ──────────────────────────
 echo ""
@@ -178,7 +197,8 @@ else
         pyodbc \
         pyserial \
         watchdog \
-        requests
+        requests \
+        hidapi
 fi
 
 # ── Verify every required module imports without error ────────────────────────

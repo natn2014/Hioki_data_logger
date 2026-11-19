@@ -34,6 +34,8 @@ from numpad_dialog import NumpadDialog
 from keyboard_dialog import KeyboardDialog
 from db_upload_manager import DBUploadManager, UploadSignals, SpecQueueManager
 from i18n import tr, set_language, get_language, DEFAULT_LANGUAGE
+from tower_light import TowerController, TOWER_DEFAULTS
+from tower_dialog import TowerLightDialog
 from temp_correction import (
     TempCorrectionTab, correct_resistance, normalize_tc_settings,
     default_tc_settings, TEMP_STALE_S,
@@ -812,6 +814,13 @@ class MainWindow(QDialog):
             lambda err, msg: self.log_event(f"Audio error ({err}): {msg}")
         )
 
+        # PATLITE LR6-USB tower light (optional): PASS green, NG red + buzzer,
+        # WAITING yellow blinking. Connected by load_config() with its settings.
+        self.tower = TowerController(self)
+        self.tower.message.connect(lambda key: self.append_log(tr(key)))
+        self.tower.status_changed.connect(self._on_tower_status)
+        self._tower_logged = False
+
         # Barcode scanner input accumulator (USB HID scanner types as keyboard)
         self._barcode_buffer = ""
         self._barcode_timer = QTimer(self)
@@ -908,6 +917,7 @@ class MainWindow(QDialog):
         self.ui.btn_settings.toggled.connect(self.ui.tools_widget.setVisible)
         self.ui.btn_waiting.clicked.connect(self.on_waiting_clicked)
         self.ui.btn_tc.clicked.connect(lambda: self.stack.setCurrentIndex(1))
+        self.ui.btn_tower.clicked.connect(self.on_tower_clicked)
         self._apply_waiting_ui()
         self._apply_point_to_ui()  # builds cards + sets initial enabled state
 
@@ -962,6 +972,7 @@ class MainWindow(QDialog):
         self.ui.label_usb_status.setText(tr(key))
         set_prop(self.ui.label_usb_status, "state", style)
         if state != "connected":
+            self.tower.update_state("WAITING")
             self._show_reading("idle", status=tr(
                 "status_connecting" if state == "connecting" else "status_disconnected"))
 
@@ -1108,6 +1119,10 @@ class MainWindow(QDialog):
         """Open circuit (probes lifted): show WAITING. Hold mode keeps the last
         reading on screen, dimmed; Release mode replaces it with WAITING."""
         status = tr("status_waiting_open") + self._probe_hint()
+        # Tower: red / green end when the probes are lifted, after the same
+        # waiting time the screen uses (so a PASS stays green that long).
+        if time.time() - self._recorded_at >= self.waiting_delay_s:
+            self.tower.update_state("WAITING")
         if self.hold_previous and self._display_value is not None:
             self._show_reading("standby", self._display_value,
                                status + tr("status_holding"), *self._display_range)
@@ -1139,6 +1154,7 @@ class MainWindow(QDialog):
     def load_config(self):
         """Load model and per-model limits from config.json, falling back to model_changes.csv."""
         config_source = "config"
+        tower_cfg = None
         try:
             if os.path.exists(CONFIG_FILE):
                 with open(CONFIG_FILE, 'r') as f:
@@ -1153,6 +1169,7 @@ class MainWindow(QDialog):
                             config.get("ng_reconfirm_max", NG_RECONFIRM_DEFAULT_MAX)))
                     except (TypeError, ValueError):
                         pass
+                    tower_cfg = config.get("tower")
                     sensor = config.get("temp_sensor", {})
                     if isinstance(sensor, dict):
                         self.temp_sensor_cfg.update(
@@ -1194,6 +1211,9 @@ class MainWindow(QDialog):
         if self.cleaned_model:
             self.log_model_change("STARTUP", "", self.cleaned_model, config_source)
 
+        # Start the tower light with its saved settings (defaults when none).
+        self.tower.set_settings(tower_cfg if isinstance(tower_cfg, dict) else TOWER_DEFAULTS)
+
         # Push loaded values into UI
         self._apply_hold_toggle_ui()
         self._apply_waiting_ui()
@@ -1220,6 +1240,7 @@ class MainWindow(QDialog):
             config["tc_x_is_temp"] = self.tc_x_is_temp
             config["waiting_delay_s"] = self.waiting_delay_s
             config["ng_reconfirm_max"] = self.ng_reconfirm_max
+            config["tower"] = dict(self.tower.settings)
             if "models" not in config:
                 config["models"] = {}
             if self.cleaned_model:
@@ -2212,6 +2233,24 @@ class MainWindow(QDialog):
             self.log_event(f"Waiting time set to {self.waiting_delay_s:g} s")
             self.append_log(tr("log_waiting_set", s=f"{self.waiting_delay_s:g}"))
 
+    # ── PATLITE tower light ───────────────────────────────────────────────────
+
+    def _on_tower_status(self, key):
+        self.log_event(f"Tower light: {key}")
+        if key == "tower_st_connected" and not self._tower_logged:
+            self._tower_logged = True          # later ones log "reconnected"
+            self.append_log(tr("log_tower_connected"))
+        elif key == "tower_st_no_access":
+            self.append_log(tr("log_tower_no_access"))
+
+    def on_tower_clicked(self):
+        dlg = TowerLightDialog(self.tower, ui_scale(), parent=self)
+        dlg.exec()
+        self.tower.restore()         # back to the real state after any test
+        self.save_config()
+        s = self.tower.settings
+        self.log_event(f"Tower light settings: {s}")
+
     # ── Temperature Correction screen + Object Temperature chip ───────────────
 
     def _build_tc_page(self, scale):
@@ -2733,6 +2772,7 @@ class MainWindow(QDialog):
         self.detect_retry_timer.stop()
         self._close_serial_connection()
         self.connected = False
+        self.tower.shutdown()        # lights off, buzzer stopped
         pending_count = self.db_manager.get_pending_count()
         if pending_count > 0:
             self.log_event(f"Application closing with {pending_count} pending uploads (saved for next run)")
@@ -2755,8 +2795,10 @@ class MainWindow(QDialog):
         set_prop(self.ui.frame_verdict, "state", state)
         if pass_result is True:
             self._play_sound("ResistancePass_TH.mp3")
+            self.tower.update_state("PASS")
         elif pass_result is False:
             self._play_sound("ResistanceOver_TH.mp3")
+            self.tower.update_state("NG")
 
     # ── Pass/fail counters (today, current model) ─────────────────────────────
 

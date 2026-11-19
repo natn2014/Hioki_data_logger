@@ -5,3 +5,4 @@ watchdog
 requests
 pymodbus              # Modbus RTU client, used by rs485_temperature_monitor.py
 matplotlib            # chart embedding, used by rs485_temperature_monitor.py
+hidapi                # PATLITE LR6-USB tower light (patlite_lr6.py / tower_light.py)

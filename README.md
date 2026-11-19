@@ -20,6 +20,7 @@ database — open it in any browser; add `?demo=1` to replay this sequence).*
 - **On-screen keyboard & numpad** — full QWERTY keyboard (with a Shift toggle) for model/point names and a numeric keypad for limits; both accept USB barcode-scanner input
 - **Hold / Release display toggle** — choose whether the big measurement value **holds** the last reading in standby (probes lifted) or **releases to WAITING**; either way the status line reads "waiting · open circuit" while the probes are lifted; the choice persists across restarts
 - **Audio feedback** — plays a Thai-language voice alert on every PASS (`ResistancePass_TH.mp3`) or FAIL (`ResistanceOver_TH.mp3`)
+- **Tower light (optional PATLITE LR6-USB)** — green + short beep on PASS, red + a selectable buzzer pattern on NG until the probes are lifted, yellow blinking while waiting; reconnects by itself after a cable pull
 - **Barcode scanner input** — USB HID scanner auto-sets the active model; all entry methods share the same unified decode logic (AIM Code 39 Extended, `$`-delimited, and plain text)
 - **Model change log** (`model_changes.csv`) — audit trail of every model switch; used to auto-recover the last model after a crash or reboot
 - Local CSV logging (daily files, no data loss on DB failure)
@@ -73,6 +74,8 @@ HIOKI resistance meter with SCPI support connected via USB or RS-232.
 Tested models: RM3544-01, RM3545, RM3542, DM7276, DM7275, IM7580A.
 
 Touchscreen deployment tested on a Raspberry Pi 5 with an ED-HMI3010-101C 10.1" 1280×800 panel.
+
+Optional: PATLITE LR6-USB signal tower (VID `191a`, PID `8003`) — see [Tower Light](#tower-light-patlite-lr6-usb).
 
 ## Setup
 
@@ -280,6 +283,44 @@ verdict show **WAITING**. That happens only after the last PASS / FAIL has been 
 waiting time. Set the time with **⚙ → ⏱ Wait … s** (numpad, 0–60 s, default 5 s); it is saved as
 `"waiting_delay_s"`.
 
+## Tower Light (PATLITE LR6-USB)
+
+An optional PATLITE LR6-USB signal tower shows the result to the whole line:
+
+| State | Light | Buzzer |
+|---|---|---|
+| **PASS** | Green, steady | One short beep (default 50 ms) |
+| **NG** | Red, steady | The selected NG pattern, repeating — until the probes are lifted |
+| **WAITING** | Yellow, blinking | Silent |
+
+- The tower changes to WAITING together with the screen: after the probes are lifted and the
+  [waiting time](#waiting-time) has passed, so a PASS stays green at least that long. It also blinks
+  yellow at startup and while the meter is disconnected.
+- With [NG reconfirm](#ng-reconfirm) on, every NG reading turns the tower red; a re-measure that passes
+  turns it green.
+- **⚙ → 🚦 Tower light** opens the settings: tower on/off, buzzer on/off (mute), the NG buzzer pattern
+  (Off / Continuous / Pattern 1–4 — tapping one plays it once), the PASS beep on/off and length, and
+  Test PASS / NG / WAITING buttons. The settings are saved as the `"tower"` block of
+  `gui_mode5_config.json`.
+- The tower is optional. With no tower, no `hidapi`, or no USB permission the app runs as before; the
+  dialog shows why it is not connected. A watchdog checks the cable every 2 s, logs
+  `⚠ Tower light disconnected` in the DATA LOG and restores the current state when it is plugged back in.
+- Driver: [patlite_lr6.py](patlite_lr6.py) (vendored from `natn2014/TowerLightUSB`, via `hidapi`, with
+  `pyusb` as a fallback backend). Controller: [tower_light.py](tower_light.py). Dialog:
+  [tower_dialog.py](tower_dialog.py).
+
+**Setup on the Pi** (`setup_services.sh` does all of this):
+
+```bash
+sudo apt install libhidapi-hidraw0 libhidapi-libusb0 libusb-1.0-0
+.venv/bin/pip install hidapi
+sudo install -m 644 deploy/99-patlite-lr6.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules && sudo udevadm trigger
+sudo usermod -aG plugdev $USER          # then log out / reboot, unplug and replug the tower
+lsusb | grep 191a                       # the tower is on the bus
+ls -l /dev/hidraw*                      # its node belongs to group plugdev
+```
+
 ## Point Cards
 
 Each card shows its tolerance and that point's **previous measured value** (`▸ 3.312`). The card is
@@ -401,6 +442,10 @@ correctly — missing fields insert as `NULL`.
 ├── UI_Resistance.ui           # Qt Designer UI definition
 ├── numpad_dialog.py           # On-screen numeric keypad (limit entry)
 ├── keyboard_dialog.py         # On-screen QWERTY keyboard (model/point names)
+├── tower_light.py             # PATLITE tower light: PASS / NG / WAITING + reconnect watchdog
+├── tower_dialog.py            # Tower light settings dialog (buzzer pattern, beep, tests)
+├── patlite_lr6.py             # PATLITE LR6-USB driver (vendored)
+├── deploy/99-patlite-lr6.rules  # udev rule: tower light access for group plugdev
 │
 ├── migrations/
 │   ├── 001_multipoint_spec.sql  # Create resistance_spec + extend resistance
