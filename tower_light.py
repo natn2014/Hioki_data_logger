@@ -2,7 +2,7 @@
 
     PASS     green steady   + one short beep
     NG       red steady     + the selected buzzer pattern, repeating
-    WAITING  yellow blink   (the tower's own LED pattern), silent
+    WAITING  yellow blink   in step with the current point card, silent
 
 Adapted from natn2014/UniversalV1 app/tower.py. The tower is optional: every
 hardware error drops the connection instead of raising, so a missing or
@@ -14,11 +14,11 @@ from typing import Optional
 from PySide6.QtCore import QObject, QTimer, Signal
 
 try:
-    from patlite_lr6 import (TowerLight, LED_ON, LED_PATTERN1, BUZZER_OFF,
+    from patlite_lr6 import (TowerLight, LED_OFF, LED_ON, BUZZER_OFF,
                              BUZZER_ON, BUZZER_PATTERN_NAMES)
 except Exception:                       # driver file missing or broken
     TowerLight = None
-    LED_ON, LED_PATTERN1 = 0x1, 0x2
+    LED_OFF, LED_ON = 0x0, 0x1
     BUZZER_OFF, BUZZER_ON = 0x0, 0x1
     BUZZER_PATTERN_NAMES = [("Off", 0x0), ("Continuous", 0x1), ("Pattern 1", 0x2),
                             ("Pattern 2", 0x3), ("Pattern 3", 0x4), ("Pattern 4", 0x5)]
@@ -39,7 +39,6 @@ TOWER_DEFAULTS = {
     "ng_pattern": BUZZER_ON,            # 0 off, 1 continuous, 2-5 pattern 1-4
     "ok_beep_enabled": True,
     "ok_beep_ms": 50,
-    "waiting_pattern": LED_PATTERN1,    # yellow LED pattern while waiting
 }
 OK_BEEP_MS_RANGE = (10, 500)
 
@@ -55,8 +54,6 @@ def normalize_tower_settings(raw):
     try:
         if int(raw.get("ng_pattern", s["ng_pattern"])) in range(0, 6):
             s["ng_pattern"] = int(raw.get("ng_pattern", s["ng_pattern"]))
-        if int(raw.get("waiting_pattern", s["waiting_pattern"])) in range(1, 6):
-            s["waiting_pattern"] = int(raw.get("waiting_pattern", s["waiting_pattern"]))
         lo, hi = OK_BEEP_MS_RANGE
         s["ok_beep_ms"] = min(hi, max(lo, int(raw.get("ok_beep_ms", s["ok_beep_ms"]))))
     except (TypeError, ValueError):
@@ -93,6 +90,7 @@ class TowerController(QObject):
         # Latest state asked for, even while disconnected: re-applied on reconnect.
         self._wanted_state: Optional[str] = None
         self._ok_beep_token = 0
+        self._blink_phase = True        # yellow on/off, driven by blink()
         self.status = "tower_st_off"
         self._watchdog = QTimer(self)
         self._watchdog.setInterval(WATCHDOG_MS)
@@ -236,13 +234,24 @@ class TowerController(QObject):
             elif state == "NG":
                 self._tower.set_tower(red=LED_ON)
             else:
-                self._tower.set_tower(yellow=self.settings["waiting_pattern"])
+                self._tower.set_tower(yellow=LED_ON if self._blink_phase else LED_OFF)
             self._last_state = state
             # Beep after set_tower(), which re-sends the (off) buzzer value and
             # would otherwise cancel the tone.
             if (state == "PASS" and self.settings["buzzer_enabled"]
                     and self.settings["ok_beep_enabled"]):
                 self._play_ok_beep()
+        except Exception:
+            self._disconnected()
+
+    def blink(self, on: bool) -> None:
+        """One blink step from the app's point-card timer: while WAITING the
+        yellow light turns on / off together with the current point card."""
+        self._blink_phase = bool(on)
+        if not self.connected or self._last_state != "WAITING":
+            return
+        try:
+            self._tower.set_tower(yellow=LED_ON if on else LED_OFF)
         except Exception:
             self._disconnected()
 
@@ -310,8 +319,5 @@ class TowerController(QObject):
             return
         try:
             self._tower.set_buzzer(self._ng_buzzer(self._last_state))
-            if self._last_state == "WAITING":
-                self._last_state = None
-                self.update_state("WAITING")    # new yellow pattern
         except Exception:
             self._disconnected()

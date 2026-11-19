@@ -2213,6 +2213,7 @@ class MainWindow(QDialog):
 
     def _blink_tick(self):
         self._blink_on = not self._blink_on
+        self.tower.blink(self._blink_on)    # WAITING: yellow in step with the card
         alarm = self._reconfirm is not None
         if 0 <= self.current_point_index < len(self.point_cards):
             self.point_cards[self.current_point_index].set_blink(self._blink_on, alarm)

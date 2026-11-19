@@ -291,7 +291,7 @@ An optional PATLITE LR6-USB signal tower shows the result to the whole line:
 |---|---|---|
 | **PASS** | Green, steady | One short beep (default 50 ms) |
 | **NG** | Red, steady | The selected NG pattern, repeating — until the probes are lifted |
-| **WAITING** | Yellow, blinking | Silent |
+| **WAITING** | Yellow, blinking in step with the current point card (0.5 s on / 0.5 s off) | Silent |
 
 - The tower changes to WAITING together with the screen: after the probes are lifted and the
   [waiting time](#waiting-time) has passed, so a PASS stays green at least that long. It also blinks
