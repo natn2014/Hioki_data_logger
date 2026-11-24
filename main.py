@@ -16,6 +16,9 @@ import serial
 import serial.tools.list_ports
 from datetime import datetime
 from threading import Thread
+# PySide6's bundled FFmpeg media plugin needs FFmpeg 4 (libavcodec.so.58), which
+# Raspberry Pi OS doesn't ship, so QMediaPlayer silently can't play. Use GStreamer.
+os.environ.setdefault("QT_MEDIA_BACKEND", "gstreamer")
 from PySide6.QtCore import QTimer, QThread, Signal, Qt, QEvent, QUrl
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtWidgets import (
@@ -2784,6 +2787,9 @@ class MainWindow(QDialog):
         path = os.path.join(app_dir, filename)
         if os.path.exists(path):
             self._media_player.stop()
+            # Clear first: with GStreamer, re-setting the same source is a no-op and
+            # the rewind seek fails, so a repeat play would jump straight to the end.
+            self._media_player.setSource(QUrl())
             self._media_player.setSource(QUrl.fromLocalFile(path))
             self._media_player.play()
 

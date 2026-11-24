@@ -29,6 +29,10 @@ warn() { echo -e "   ${YELLOW}[WARN]${NC} $*"; }
 die()  { echo -e "   ${RED}[FAIL]${NC} $*"; exit 1; }
 
 restore_data() {
+    if [ -f "$BACKUP/pyvenv.cfg" ]; then
+        mkdir -p "$APP_DIR/.venv"
+        cp -a "$BACKUP/pyvenv.cfg" "$APP_DIR/.venv/pyvenv.cfg"
+    fi
     for f in $DATA_FILES; do
         [ -f "$BACKUP/$f" ] && cp -a "$BACKUP/$f" "$APP_DIR/$f"
     done
@@ -57,6 +61,9 @@ ok "stopped"
 echo ">> 2/7 Back up data files to $BACKUP"
 mkdir -p "$BACKUP"
 cp -a ./*.json ./*.csv ./*.log ./*.txt "$BACKUP/" 2>/dev/null || true
+# Older commits tracked a Windows .venv/pyvenv.cfg: a checkout would replace or
+# delete the Pi's own one and break the venv. Keep it and put it back below.
+[ -f .venv/pyvenv.cfg ] && cp -a .venv/pyvenv.cfg "$BACKUP/pyvenv.cfg"
 ok "$(ls "$BACKUP" | wc -l) files backed up"
 trap 'on_error $LINENO' ERR
 
@@ -92,7 +99,10 @@ sudo apt-get install -y --no-install-recommends \
     libhidapi-hidraw0 libhidapi-libusb0 libusb-1.0-0 fonts-thai-tlwg >/dev/null
 .venv/bin/pip install -q -r requirements.txt
 .venv/bin/python -c "import hid" || die "hidapi did not install"
-ok "packages installed (hidapi OK)"
+PYC="$(mktemp -d)"
+PYTHONPYCACHEPREFIX="$PYC" .venv/bin/python -m py_compile ./*.py     || die "the new code does not compile on this Pi's Python"
+rm -rf "$PYC"
+ok "packages installed (hidapi OK), code compiles"
 
 echo ">> 6/7 Tower light USB permission"
 sudo install -m 644 deploy/99-patlite-lr6.rules /etc/udev/rules.d/99-patlite-lr6.rules

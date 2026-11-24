@@ -377,6 +377,8 @@ Environment=XDG_RUNTIME_DIR=/run/user/$APP_UID
 Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$APP_UID/bus
 Environment=PYTHONUNBUFFERED=1
 Environment=QT_QPA_PLATFORM=xcb
+Environment=PULSE_SERVER=unix:/run/user/$APP_UID/pulse/native
+SupplementaryGroups=audio
 
 [Install]
 WantedBy=graphical.target
