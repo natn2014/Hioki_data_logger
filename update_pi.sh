@@ -91,9 +91,14 @@ for f in $DATA_FILES; do
         rm -f "$f"
     fi
 done
-[ "$ONLINE" = 1 ] && git fetch origin
+# Name the branch explicitly: a single-branch clone fetches only its own branch.
+[ "$ONLINE" = 1 ] && git fetch origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
 git rev-parse --verify -q "origin/$BRANCH" >/dev/null || die "origin/$BRANCH not found (offline: fetch the bundle first)"
-git checkout "$BRANCH"
+if git rev-parse --verify -q "refs/heads/$BRANCH" >/dev/null; then
+    git checkout "$BRANCH"
+else
+    git checkout -b "$BRANCH" "origin/$BRANCH"
+fi
 if ! git merge --ff-only "origin/$BRANCH"; then
     warn "this Pi has its own commits on $BRANCH; they are kept as branch pi-local-$STAMP"
     git branch "pi-local-$STAMP"
