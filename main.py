@@ -852,6 +852,9 @@ class MainWindow(QDialog):
         self.retry_upload_timer = QTimer(self)
         self.retry_upload_timer.setSingleShot(False)
         self.retry_upload_timer.timeout.connect(self.retry_pending_uploads)
+        # Uploads don't need the meter: retry the queue from startup, every 5 s
+        # (DBUploadManager gates the actual attempts with its backoff).
+        self.retry_upload_timer.start(5000)
 
         # Serial-hang detector: watches the poll worker's liveness stamp from the
         # (still-alive) UI thread and soft-recovers a wedged connection.
@@ -1919,7 +1922,6 @@ class MainWindow(QDialog):
             self.poll_thread.health_fail.connect(self.handle_comm_error)
             self.poll_thread.start()
 
-            self.retry_upload_timer.start(5000)   # Check every 5 s; DBUploadManager gates actual retries via backoff
         except Exception as e:
             self.log_event(f"Connection failed: {e}")
             show_message(self, QMessageBox.Icon.Critical, tr("msg_conn_error_title"), str(e))
@@ -2553,9 +2555,9 @@ class MainWindow(QDialog):
             self.append_log(tr("log_db_unreachable", n=count, wait=wait_str))
 
     def retry_pending_uploads(self):
-        """Timer callback — let DBUploadManager decide whether the backoff window has elapsed."""
-        if not self.connected:
-            return
+        """Timer callback — let DBUploadManager decide whether the backoff window
+        has elapsed. Runs with or without the meter: a reading queued before the
+        meter was unplugged must still reach the database."""
         count, wait, reachable = self.db_manager.get_queue_status()
         if count > 0 and self.db_manager.should_retry_now():
             self.log_event(f"Backoff elapsed — attempting batch upload of {count} pending record(s)")
@@ -2746,7 +2748,6 @@ class MainWindow(QDialog):
     def stop_mode(self):
         self.log_event("Measurement stopped by user")
         self._stop_poll_thread()
-        self.retry_upload_timer.stop()
         self._close_serial_connection()
         self.connected = False
         self._set_usb_status("disconnected")
