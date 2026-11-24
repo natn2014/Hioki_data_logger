@@ -6,6 +6,11 @@
 #   bash update_pi.sh                 # branch MSW-RS485TC (default)
 #   bash update_pi.sh MSW             # or another branch
 #
+# No internet (factory LAN)? Copy the code and Python wheels to the Pi first:
+#   git fetch /tmp/hioki.bundle BRANCH:refs/remotes/origin/BRANCH
+#   python packages (*.whl) into /tmp/hioki_wheels
+# The script then skips GitHub / apt / PyPI and uses what was copied.
+#
 # Keeps the device's own data files: gui_mode5_config.json (current model,
 # limits, language, ...), pending/rejected/failed uploads, model_changes.csv,
 # the daily CSV files and logs. A full backup is also kept in ~/hioki_backup_*.
@@ -26,7 +31,9 @@ DATA_FILES="gui_mode5_config.json pending_uploads.json rejected_uploads.json
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
 ok()   { echo -e "   ${GREEN}[OK]${NC}   $*"; }
 warn() { echo -e "   ${YELLOW}[WARN]${NC} $*"; }
-die()  { echo -e "   ${RED}[FAIL]${NC} $*"; exit 1; }
+die()  { echo -e "   ${RED}[FAIL]${NC} $*"; [ -n "$STARTED" ] && on_error "$BASH_LINENO"; exit 1; }
+STARTED=""
+WHEELS_DIR="${WHEELS_DIR:-/tmp/hioki_wheels}"
 
 restore_data() {
     if [ -f "$BACKUP/pyvenv.cfg" ]; then
@@ -66,6 +73,10 @@ cp -a ./*.json ./*.csv ./*.log ./*.txt "$BACKUP/" 2>/dev/null || true
 [ -f .venv/pyvenv.cfg ] && cp -a .venv/pyvenv.cfg "$BACKUP/pyvenv.cfg"
 ok "$(ls "$BACKUP" | wc -l) files backed up"
 trap 'on_error $LINENO' ERR
+STARTED=1
+ONLINE=0
+timeout 8 git ls-remote origin HEAD >/dev/null 2>&1 && ONLINE=1
+[ "$ONLINE" = 1 ] && ok "GitHub reachable" || warn "no internet: using code / packages copied to this Pi"
 
 echo ">> 3/7 Get the new code ($BRANCH)"
 # Local changes are only the data files (backed up above): put them aside so
@@ -80,9 +91,10 @@ for f in $DATA_FILES; do
         rm -f "$f"
     fi
 done
-git fetch origin
+[ "$ONLINE" = 1 ] && git fetch origin
+git rev-parse --verify -q "origin/$BRANCH" >/dev/null || die "origin/$BRANCH not found (offline: fetch the bundle first)"
 git checkout "$BRANCH"
-if ! git pull --ff-only origin "$BRANCH"; then
+if ! git merge --ff-only "origin/$BRANCH"; then
     warn "this Pi has its own commits on $BRANCH; they are kept as branch pi-local-$STAMP"
     git branch "pi-local-$STAMP"
     git reset --hard "origin/$BRANCH"
@@ -94,15 +106,26 @@ restore_data
 ok "restored (current model, limits, upload queues, logs, daily CSVs)"
 
 echo ">> 5/7 System packages + Python packages"
-sudo apt-get update -qq
-sudo apt-get install -y --no-install-recommends \
-    libhidapi-hidraw0 libhidapi-libusb0 libusb-1.0-0 fonts-thai-tlwg >/dev/null
-.venv/bin/pip install -q -r requirements.txt
-.venv/bin/python -c "import hid" || die "hidapi did not install"
+if [ "$ONLINE" = 1 ]; then
+    sudo apt-get update -qq
+    sudo apt-get install -y --no-install-recommends \
+        libhidapi-hidraw0 libhidapi-libusb0 libusb-1.0-0 fonts-thai-tlwg >/dev/null
+    .venv/bin/pip install -q -r requirements.txt
+else
+    dpkg -s libhidapi-hidraw0 >/dev/null 2>&1 || warn "libhidapi-hidraw0 missing (apt needs internet)"
+    if ls "$WHEELS_DIR"/*.whl >/dev/null 2>&1; then
+        .venv/bin/pip install -q --no-index --find-links "$WHEELS_DIR" "$WHEELS_DIR"/*.whl
+    fi
+fi
+if .venv/bin/python -c "import hid" 2>/dev/null; then
+    ok "hidapi OK"
+else
+    warn "hidapi not installed: the tower light stays off (the app works without it)"
+fi
 PYC="$(mktemp -d)"
 PYTHONPYCACHEPREFIX="$PYC" .venv/bin/python -m py_compile ./*.py     || die "the new code does not compile on this Pi's Python"
 rm -rf "$PYC"
-ok "packages installed (hidapi OK), code compiles"
+ok "code compiles on this Pi's Python"
 
 echo ">> 6/7 Tower light USB permission"
 sudo install -m 644 deploy/99-patlite-lr6.rules /etc/udev/rules.d/99-patlite-lr6.rules
