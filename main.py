@@ -766,7 +766,6 @@ class MainWindow(QDialog):
         self.lower_limit = 0.0
         self.upper_limit = 1000.0
         self.cleaned_model = ""
-        self.last_db_insert_time = None
         # Measure-display behaviour in standby (probes lifted → meter reads
         # over-range/OL). True = keep showing the last reading (default, as
         # before); False = release the display to 0. Persisted in config.
@@ -2080,16 +2079,14 @@ class MainWindow(QDialog):
             self.append_log(tr("log_ng_cleared"))
         self._commit_result(info, pass_result)
 
-    def _commit_result(self, info, pass_result, force_upload=False):
+    def _commit_result(self, info, pass_result):
         """Final result of a point: CSV + DB upload, counters, verdict, card
         colour, then advance to the next point."""
         p_name, p_seq = info["p_name"], info["p_seq"]
         p_lower, p_upper = info["p_lower"], info["p_upper"]
         value, value_text, time_str = info["value"], info["value_text"], info["time_str"]
         cleaned_model = self.cleaned_model.strip()
-        current_time = datetime.now()
-        can_insert = force_upload or (self.last_db_insert_time is None or
-                                      (current_time - self.last_db_insert_time).total_seconds() >= 5)
+        current_time = datetime.now()   # the measurement time: CSV and DB both get it
         status_for_db = {True: "OK", False: "NG"}.get(pass_result, "N/A")
 
         try:
@@ -2106,20 +2103,22 @@ class MainWindow(QDialog):
             csv_status = tr("csv_error", e=e)
             print(f"CSV write error: {e}")
 
-        if cleaned_model and can_insert:
+        # Every final result is uploaded (or queued if the server is down). There
+        # used to be a 5 s throttle here that silently dropped readings — with
+        # multi-point models the B-C probe lands inside that window, so ~44 % of
+        # results never reached the server (only the CSV had them).
+        if cleaned_model:
             try:
                 self.db_manager.upload_async(cleaned_model, value, status_for_db,
                                              self.on_upload_complete, point=p_name, seq=p_seq,
-                                             lower=p_lower, upper=p_upper)
-                self.last_db_insert_time = current_time
+                                             lower=p_lower, upper=p_upper,
+                                             measured_at=current_time)
                 db_status = tr("db_uploading")
             except Exception as e:
                 db_status = tr("db_error", e=e)
                 print(f"Database upload error: {e}")
-        elif not cleaned_model:
-            db_status = tr("db_no_model")
         else:
-            db_status = tr("db_wait")
+            db_status = tr("db_no_model")
 
         self.append_result(time_str, p_name, value_text, pass_result, info["result_text"],
                            f"{csv_status} {db_status}")
@@ -2200,7 +2199,7 @@ class MainWindow(QDialog):
         where = f"{rc['p_name']} · " if rc["p_name"] else ""
         self.log_event(f"NG confirmed after {rc['n']} re-measure(s): {where}{rc['value_text']} Ω")
         self.append_log(tr("log_ng_confirmed", where=where, value=rc["value_text"]))
-        self._commit_result(rc, False, force_upload=True)
+        self._commit_result(rc, False)
 
     def _cancel_reconfirm(self):
         """Point / model changed while an NG was pending: drop it (the attempts

@@ -166,11 +166,12 @@ class DBUploadManager:
     # ── Immediate upload ──────────────────────────────────────────────────────
 
     def upload_async(self, model, value, status, callback=None,
-                     point=None, seq=None, lower=None, upper=None):
+                     point=None, seq=None, lower=None, upper=None, measured_at=None):
         """Upload in background. If server is known down, queue directly.
-        The reading is stamped with when it was taken, so a queued reading keeps
-        its real time when it finally uploads."""
-        measured_at = datetime.now()
+        The reading is stamped with when it was taken (measured_at — pass the
+        same time the CSV row got, so both match exactly), so a queued reading
+        keeps its real time when it finally uploads."""
+        measured_at = measured_at or datetime.now()
         if not self.server_reachable:
             # Skip the network attempt — just queue it.
             count = self.add_pending_upload(model, value, status,
